@@ -1,0 +1,57 @@
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Backend runtime data: SQLite, Telethon sessions, uploads and avatars
+backend/data/**
+!backend/data/.gitkeep
+!backend/data/**/.gitkeep
+*.session
+*.session-journal
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# Keep project knowledge base and agent rules in Git
+!AGENTS.md
+!vault/
+!vault/**
