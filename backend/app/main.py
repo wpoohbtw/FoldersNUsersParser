@@ -88,6 +88,8 @@ def get_portal_user(
         if settings.app_env == "production":
             raise HTTPException(status_code=401, detail="Portal user headers required")
         username = settings.portal_dev_username
+    if user_id and username:
+        db.bind_portal_username_to_user_id(user_id, username)
     return PortalUser(
         user_id=user_id,
         username=username,

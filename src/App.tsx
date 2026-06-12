@@ -10,6 +10,7 @@ import {
   FolderOpen,
   HardDriveUpload,
   Hash,
+  Home,
   Link2,
   Loader2,
   LockKeyhole,
@@ -1617,10 +1618,11 @@ export function App() {
     { icon: <Folder size={22} />, label: 'Folder', active: activePage === 'folder', onClick: () => setActivePage('folder') },
     { icon: <RadioTower size={22} />, label: 'Каналы', active: activePage === 'channels', onClick: () => setActivePage('channels') },
   ];
+  const portalHomeItem = { icon: <Home size={22} />, label: 'На главную', onClick: () => { window.location.href = '/'; } };
 
   return (
     <main className="appShell">
-      <VerticalDock items={navItems} />
+      <VerticalDock items={navItems} footerItem={portalHomeItem} />
       <section className="pageSurface">
         <div className="ambientGlow one" />
         <div className="ambientGlow two" />

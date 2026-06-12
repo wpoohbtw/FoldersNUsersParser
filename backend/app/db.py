@@ -429,6 +429,110 @@ class Database:
             )
         self.conn.commit()
 
+    def bind_portal_username_to_user_id(self, portal_user_id: str, portal_username: str) -> None:
+        portal_user_id = str(portal_user_id or "").strip()
+        portal_username = str(portal_username or "").strip()
+        if not portal_user_id or not portal_username:
+            return
+
+        old_table = self.conn.execute(
+            """
+            SELECT id FROM channel_tables
+            WHERE owner_portal_user_id IS NULL AND owner_portal_username = ?
+            LIMIT 1
+            """,
+            (portal_username,),
+        ).fetchone()
+        current_table = self.conn.execute(
+            """
+            SELECT id FROM channel_tables
+            WHERE owner_portal_user_id = ?
+            LIMIT 1
+            """,
+            (portal_user_id,),
+        ).fetchone()
+
+        if old_table and current_table and int(old_table["id"]) != int(current_table["id"]):
+            old_table_id = int(old_table["id"])
+            current_table_id = int(current_table["id"])
+            old_access_rows = self.conn.execute(
+                """
+                SELECT portal_user_id, portal_username, role
+                FROM channel_table_access
+                WHERE table_id = ?
+                """,
+                (old_table_id,),
+            ).fetchall()
+            self.conn.execute("UPDATE folder_channels SET table_id = ? WHERE table_id = ?", (current_table_id, old_table_id))
+            for access in old_access_rows:
+                self.conn.execute(
+                    """
+                    INSERT OR IGNORE INTO channel_table_access (
+                        table_id,
+                        portal_user_id,
+                        portal_username,
+                        role
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        current_table_id,
+                        access["portal_user_id"],
+                        access["portal_username"],
+                        access["role"],
+                    ),
+                )
+            self.conn.execute("DELETE FROM channel_table_access WHERE table_id = ?", (old_table_id,))
+            self.conn.execute("DELETE FROM channel_tables WHERE id = ?", (old_table_id,))
+        elif old_table:
+            old_table_id = int(old_table["id"])
+            self.conn.execute(
+                """
+                UPDATE channel_tables
+                SET owner_portal_user_id = ?
+                WHERE id = ?
+                """,
+                (portal_user_id, old_table_id),
+            )
+            self.conn.execute(
+                """
+                UPDATE channel_table_access
+                SET portal_user_id = ?
+                WHERE table_id = ?
+                  AND portal_user_id IS NULL
+                  AND portal_username = ?
+                """,
+                (portal_user_id, old_table_id, portal_username),
+            )
+
+        for table in (
+            "accounts",
+            "import_jobs",
+            "folder_listeners",
+            "folder_parser_logs",
+            "folder_channels",
+            "processed_folder_links",
+        ):
+            self.conn.execute(
+                f"""
+                UPDATE {table}
+                SET portal_user_id = ?
+                WHERE portal_user_id IS NULL
+                  AND portal_username = ?
+                """,
+                (portal_user_id, portal_username),
+            )
+        self.conn.execute(
+            """
+            UPDATE channel_table_access
+            SET portal_user_id = ?
+            WHERE portal_user_id IS NULL
+              AND portal_username = ?
+            """,
+            (portal_user_id, portal_username),
+        )
+        self.conn.commit()
+
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
         if column in {row["name"] for row in rows}:
