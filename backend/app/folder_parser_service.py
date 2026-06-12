@@ -33,6 +33,7 @@ class ActiveFolderListener:
     task: asyncio.Task
     active_channel_ids: set[int] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    sync_task: asyncio.Task | None = None
 
 
 class FolderParserService:
@@ -40,7 +41,14 @@ class FolderParserService:
         self.settings = settings
         self.db = db
         self._listeners: dict[str, ActiveFolderListener] = {}
+        self._background_tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
+
+    def _track_background_task(self, coro: Any) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def restore_running_listeners(self) -> None:
         for row in self.db.list_running_folder_listeners():
@@ -116,7 +124,17 @@ class FolderParserService:
                 client=client,
                 task=task,
             )
-            active_ids = await self._sync_folder_channels(listener, folder_filter, source_channel=None)
+            active_ids = self._folder_filter_channel_ids(folder_filter)
+            self._track_background_task(
+                self._sync_folder_once_background(
+                    account,
+                    str(folder_id),
+                    listener_id,
+                    folder_title,
+                    portal_user_id,
+                    portal_username,
+                )
+            )
             return {
                 "status": "idle",
                 "listener_id": listener_id,
@@ -125,6 +143,49 @@ class FolderParserService:
                 "folder_title": folder_title,
                 "channels": len(active_ids),
             }
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            self._close_session_storage(client)
+
+    async def _sync_folder_once_background(
+        self,
+        account: dict,
+        folder_id: str,
+        listener_id: int,
+        folder_title: str,
+        portal_user_id: str,
+        portal_username: str,
+    ) -> None:
+        session_name = account.get("session_name") or ""
+        session_file = self.settings.sessions_dir / f"{session_name}.session"
+        client = TelegramClient(str(session_file.with_suffix("")), self.settings.api_id, self.settings.api_hash)
+        task = asyncio.create_task(asyncio.sleep(0))
+        listener = ActiveFolderListener(
+            key="sync-once",
+            listener_id=listener_id,
+            portal_user_id=portal_user_id,
+            portal_username=portal_username,
+            account_id=int(account["id"]),
+            folder_id=str(folder_id),
+            folder_title=folder_title,
+            client=client,
+            task=task,
+        )
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise ValueError("Сессия аккаунта не авторизована")
+            folder_filter = await self._get_folder_filter(client, int(folder_id))
+            await self._sync_folder_channels(listener, folder_filter, source_channel=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._log(listener, "warn", f"Ошибка синхронизации папки: {err}")
         finally:
             if not task.done():
                 task.cancel()
@@ -174,10 +235,10 @@ class FolderParserService:
                 client=client,
                 task=asyncio.create_task(client.run_until_disconnected()),
             )
-            listener.active_channel_ids = await self._sync_folder_channels(listener, folder_filter, source_channel=None)
+            listener.active_channel_ids = self._folder_filter_channel_ids(folder_filter)
             client.add_event_handler(self._make_message_handler(listener), events.NewMessage())
-            await client.catch_up()
             self._listeners[key] = listener
+            listener.sync_task = self._track_background_task(self._finish_listener_start(listener, folder_filter))
 
         self._log(
             listener,
@@ -186,6 +247,25 @@ class FolderParserService:
             event_type="parser-started",
         )
         return self._listener_payload(listener, "running")
+
+    async def _finish_listener_start(
+        self,
+        listener: ActiveFolderListener,
+        folder_filter: DialogFilter | DialogFilterChatlist,
+    ) -> None:
+        try:
+            async with listener.lock:
+                listener.active_channel_ids = await self._sync_folder_channels(listener, folder_filter, source_channel=None)
+                await listener.client.catch_up()
+            self._log(
+                listener,
+                "system",
+                f"Первичная синхронизация завершена, слушаю {len(listener.active_channel_ids)} каналов",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._log(listener, "warn", f"Ошибка первичной синхронизации слушателя: {err}", event_type="parser-error")
 
     async def stop_listener(self, account_id: int, folder_id: str, portal_user_id: str = "", portal_username: str = "") -> dict:
         key = self._listener_key(portal_user_id, portal_username, int(account_id), str(folder_id))
@@ -202,6 +282,8 @@ class FolderParserService:
                 portal_username=listener.portal_username,
             )
             await listener.client.disconnect()
+            if listener.sync_task and not listener.sync_task.done():
+                listener.sync_task.cancel()
             listener.task.cancel()
             return self._listener_payload(listener, "idle")
 
@@ -222,7 +304,12 @@ class FolderParserService:
                 await listener.client.disconnect()
             except Exception:
                 pass
+            if listener.sync_task and not listener.sync_task.done():
+                listener.sync_task.cancel()
             listener.task.cancel()
+        for task in list(self._background_tasks):
+            task.cancel()
+        self._background_tasks.clear()
 
     def get_listener_status(self, account_id: int, folder_id: str, portal_user_id: str = "", portal_username: str = "") -> dict:
         key = self._listener_key(portal_user_id, portal_username, int(account_id), str(folder_id))
