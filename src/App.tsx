@@ -17,6 +17,7 @@ import {
   Play,
   RadioTower,
   RefreshCw,
+  RotateCcw,
   Search,
   Square,
   Terminal,
@@ -25,7 +26,18 @@ import {
   UserRoundCog,
   X,
 } from 'lucide-react';
-import { api, type AccountRole, type AccountStatus, type ApiAccount, type ApiFolder, type ImportItem, type ImportJob, type PortalUser } from './api';
+import {
+  api,
+  type AccountRole,
+  type AccountStatus,
+  type ApiAccount,
+  type ApiFolder,
+  type ApiFolderChannel,
+  type FolderLog,
+  type ImportItem,
+  type ImportJob,
+  type PortalUser,
+} from './api';
 import { VerticalDock } from './components/VerticalDock';
 
 const validityLabels: Record<string, string> = {
@@ -51,194 +63,9 @@ const roleClassNames: Record<AccountRole, string> = {
 
 type AppPage = 'accounts' | 'chat' | 'folder' | 'channels';
 type ListenerStatus = 'idle' | 'running';
+type ChannelReviewFilter = 'all' | 'checked' | 'unchecked' | 'rejected';
 
 const APP_PAGE_STORAGE_KEY = 'fnup.activePage';
-const FOLDER_LOGS_STORAGE_KEY = 'fnup.folderLogs';
-
-type FolderLogType = 'info' | 'success' | 'warn' | 'system' | 'scan';
-
-type FolderLogEntry = {
-  id: string;
-  timestamp: string;
-  type: FolderLogType;
-  message: string;
-};
-
-type MockFolderChannel = {
-  id: string;
-  title: string;
-  url: string;
-  avatarUrl: string;
-  subscribers: number;
-  avgViews: number;
-  addedAt: string;
-  sourceChannels: Array<{
-    id: string;
-    title: string;
-    avatarUrl: string;
-  }>;
-};
-
-const mockFolderChannels: MockFolderChannel[] = [
-  {
-    id: 'ch_aurora_tape',
-    title: 'Aurora Tape',
-    url: 'https://t.me/aurora_tape',
-    avatarUrl: 'https://picsum.photos/seed/aurora-tape/96/96',
-    subscribers: 18420,
-    avgViews: 4210,
-    addedAt: '2026-06-11T12:48:00Z',
-    sourceChannels: [
-      { id: 'src_cryptoline', title: 'Cryptoline Daily', avatarUrl: 'https://picsum.photos/seed/cryptoline/72/72' },
-      { id: 'src_alpha', title: 'Alpha Signal Room', avatarUrl: 'https://picsum.photos/seed/alpha-signal/72/72' },
-      { id: 'src_vectormarket', title: 'Vector Market', avatarUrl: 'https://picsum.photos/seed/vector-market/72/72' },
-    ],
-  },
-  {
-    id: 'ch_northdesk',
-    title: 'Northdesk Briefs',
-    url: 'https://t.me/northdesk_briefs',
-    avatarUrl: 'https://picsum.photos/seed/northdesk-briefs/96/96',
-    subscribers: 73200,
-    avgViews: 12840,
-    addedAt: '2026-06-11T11:19:00Z',
-    sourceChannels: [
-      { id: 'src_launch', title: 'Launch Scanner', avatarUrl: 'https://picsum.photos/seed/launch-scanner/72/72' },
-      { id: 'src_delta', title: 'Delta Feed', avatarUrl: 'https://picsum.photos/seed/delta-feed/72/72' },
-    ],
-  },
-  {
-    id: 'ch_signalforge',
-    title: 'Signal Forge',
-    url: 'https://t.me/signal_forge',
-    avatarUrl: 'https://picsum.photos/seed/signal-forge/96/96',
-    subscribers: 29640,
-    avgViews: 6730,
-    addedAt: '2026-06-10T22:06:00Z',
-    sourceChannels: [
-      { id: 'src_cryptoline', title: 'Cryptoline Daily', avatarUrl: 'https://picsum.photos/seed/cryptoline/72/72' },
-      { id: 'src_radar', title: 'Radar Watch', avatarUrl: 'https://picsum.photos/seed/radar-watch/72/72' },
-      { id: 'src_mono', title: 'Mono Ledger', avatarUrl: 'https://picsum.photos/seed/mono-ledger/72/72' },
-      { id: 'src_pulse', title: 'Pulse Queue', avatarUrl: 'https://picsum.photos/seed/pulse-queue/72/72' },
-    ],
-  },
-  {
-    id: 'ch_echochain',
-    title: 'Echochain Research',
-    url: 'https://t.me/echochain_research',
-    avatarUrl: 'https://picsum.photos/seed/echochain-research/96/96',
-    subscribers: 118900,
-    avgViews: 24100,
-    addedAt: '2026-06-10T19:37:00Z',
-    sourceChannels: [],
-  },
-  {
-    id: 'ch_quantdock',
-    title: 'Quant Dock',
-    url: 'https://t.me/quant_dock',
-    avatarUrl: 'https://picsum.photos/seed/quant-dock/96/96',
-    subscribers: 45280,
-    avgViews: 9520,
-    addedAt: '2026-06-09T17:12:00Z',
-    sourceChannels: [
-      { id: 'src_delta', title: 'Delta Feed', avatarUrl: 'https://picsum.photos/seed/delta-feed/72/72' },
-      { id: 'src_vectormarket', title: 'Vector Market', avatarUrl: 'https://picsum.photos/seed/vector-market/72/72' },
-    ],
-  },
-  {
-    id: 'ch_blackterminal',
-    title: 'Black Terminal',
-    url: 'https://t.me/black_terminal',
-    avatarUrl: 'https://picsum.photos/seed/black-terminal/96/96',
-    subscribers: 9130,
-    avgViews: 3140,
-    addedAt: '2026-06-09T14:25:00Z',
-    sourceChannels: [
-      { id: 'src_launch', title: 'Launch Scanner', avatarUrl: 'https://picsum.photos/seed/launch-scanner/72/72' },
-      { id: 'src_mono', title: 'Mono Ledger', avatarUrl: 'https://picsum.photos/seed/mono-ledger/72/72' },
-      { id: 'src_pulse', title: 'Pulse Queue', avatarUrl: 'https://picsum.photos/seed/pulse-queue/72/72' },
-    ],
-  },
-  {
-    id: 'ch_meridiannode',
-    title: 'Meridian Node',
-    url: 'https://t.me/meridian_node',
-    avatarUrl: 'https://picsum.photos/seed/meridian-node/96/96',
-    subscribers: 56110,
-    avgViews: 11080,
-    addedAt: '2026-06-08T21:03:00Z',
-    sourceChannels: [
-      { id: 'src_radar', title: 'Radar Watch', avatarUrl: 'https://picsum.photos/seed/radar-watch/72/72' },
-      { id: 'src_cryptoline', title: 'Cryptoline Daily', avatarUrl: 'https://picsum.photos/seed/cryptoline/72/72' },
-    ],
-  },
-  {
-    id: 'ch_coldindex',
-    title: 'Cold Index',
-    url: 'https://t.me/cold_index',
-    avatarUrl: 'https://picsum.photos/seed/cold-index/96/96',
-    subscribers: 34780,
-    avgViews: 8060,
-    addedAt: '2026-06-08T16:44:00Z',
-    sourceChannels: [],
-  },
-  {
-    id: 'ch_circuitbrief',
-    title: 'Circuit Brief',
-    url: 'https://t.me/circuit_brief',
-    avatarUrl: 'https://picsum.photos/seed/circuit-brief/96/96',
-    subscribers: 140300,
-    avgViews: 31290,
-    addedAt: '2026-06-07T18:31:00Z',
-    sourceChannels: [
-      { id: 'src_delta', title: 'Delta Feed', avatarUrl: 'https://picsum.photos/seed/delta-feed/72/72' },
-      { id: 'src_alpha', title: 'Alpha Signal Room', avatarUrl: 'https://picsum.photos/seed/alpha-signal/72/72' },
-      { id: 'src_launch', title: 'Launch Scanner', avatarUrl: 'https://picsum.photos/seed/launch-scanner/72/72' },
-    ],
-  },
-];
-
-const initialFolderLogs: FolderLogEntry[] = [
-  {
-    id: 'log_seed_1',
-    timestamp: '2026-06-11T12:48:10Z',
-    type: 'system',
-    message: 'Консоль слушателя папки инициализирована',
-  },
-  {
-    id: 'log_seed_2',
-    timestamp: '2026-06-11T12:49:02Z',
-    type: 'info',
-    message: 'Обнаружена папка (3 канала) в канале Aurora Tape',
-  },
-  {
-    id: 'log_seed_3',
-    timestamp: '2026-06-11T12:49:08Z',
-    type: 'scan',
-    message: 'Сканирую 3 канала из найденной папки',
-  },
-  {
-    id: 'log_seed_4',
-    timestamp: '2026-06-11T12:49:17Z',
-    type: 'success',
-    message: '3 канала добавлено в таблицу',
-  },
-  {
-    id: 'log_seed_5',
-    timestamp: '2026-06-11T12:51:40Z',
-    type: 'warn',
-    message: 'Повторная ссылка на уже обработанную папку пропущена',
-  },
-];
-
-function createFolderLog(type: FolderLogType, message: string): FolderLogEntry {
-  return {
-    id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-    timestamp: new Date().toISOString(),
-    type,
-    message,
-  };
-}
 
 function getPortalStorageUser(currentUser: PortalUser | null, accounts: ApiAccount[] = []) {
   if (currentUser?.portal_user_id) {
@@ -257,30 +84,8 @@ function getPortalStorageUser(currentUser: PortalUser | null, accounts: ApiAccou
   return accountWithUsername?.portal_username || 'anonymous';
 }
 
-function getFolderLogsStorageKey(portalUserKey: string) {
-  return `${FOLDER_LOGS_STORAGE_KEY}.${portalUserKey || 'anonymous'}`;
-}
-
 function getActivePageStorageKey(portalUserKey: string) {
   return `${APP_PAGE_STORAGE_KEY}.${portalUserKey || 'anonymous'}`;
-}
-
-function getStoredFolderLogs(storageKey: string) {
-  if (typeof window === 'undefined') {
-    return initialFolderLogs;
-  }
-
-  const value = window.localStorage.getItem(storageKey);
-  if (!value) {
-    return initialFolderLogs;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as FolderLogEntry[];
-    return Array.isArray(parsed) ? parsed : initialFolderLogs;
-  } catch {
-    return initialFolderLogs;
-  }
 }
 
 function maskPhone(phone: string) {
@@ -853,40 +658,98 @@ function ImportModal({ onClose, onAccountsChanged }: { onClose: () => void; onAc
   );
 }
 
-function ChannelAvatar({ src, title, size = 'normal' }: { src: string; title: string; size?: 'normal' | 'small' }) {
-  return <img className={`channelAvatar ${size}`} src={src} alt="" loading="lazy" title={title} />;
+const folderUi = {
+  channels: '\u041a\u0430\u043d\u0430\u043b\u044b',
+  channel: '\u041a\u0430\u043d\u0430\u043b',
+  subscribers: '\u041f\u043e\u0434\u043f\u0438\u0441\u0447\u0438\u043a\u0438',
+  folder: '\u041f\u0430\u043f\u043a\u0430',
+  addedAt: '\u0414\u0430\u0442\u0430 \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u044f',
+  search: '\u041f\u043e\u0438\u0441\u043a \u043f\u043e \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044e \u0438\u043b\u0438 \u0441\u0441\u044b\u043b\u043a\u0435',
+  showFolderChannels: '\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b \u043f\u0430\u043f\u043a\u0438',
+  loadingChannels: '\u041a\u0430\u043d\u0430\u043b\u044b \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u044e\u0442\u0441\u044f',
+  noChannels: '\u041a\u0430\u043d\u0430\u043b\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b',
+  loadChannelsFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b',
+  all: '\u0412\u0441\u0435',
+  checked: '\u041f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
+  unchecked: '\u041d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
+  rejected: '\u041d\u0435 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0442',
+  review: '\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430',
+  approved: '\u041f\u0440\u043e\u0432\u0435\u0440\u0435\u043d',
+  rejectedOne: '\u041d\u0435 \u043f\u043e\u0434\u0445\u043e\u0434\u0438\u0442',
+  logsConsole: '\u041a\u043e\u043d\u0441\u043e\u043b\u044c \u043b\u043e\u0433\u043e\u0432',
+  clearLogs: '\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043b\u043e\u0433\u0438',
+  noLogs: '\u041b\u043e\u0433\u043e\u0432 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442',
+  folders: '\u041f\u0430\u043f\u043a\u0438',
+  listener: '\u0421\u043b\u0443\u0448\u0430\u0442\u0435\u043b\u044c \u043f\u0430\u043f\u043a\u0438',
+  account: '\u0410\u043a\u043a\u0430\u0443\u043d\u0442',
+  noAccounts: '\u041d\u0435\u0442 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u043e\u0432',
+  getFolders: '\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0438',
+  noFolderSelected: '\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u0430',
+  noFolders: '\u041f\u0430\u043f\u043e\u043a \u043d\u0435\u0442',
+  channelsCount: '\u043a\u0430\u043d\u0430\u043b\u043e\u0432',
+  start: '\u0417\u0430\u043f\u0443\u0441\u0442\u0438\u0442\u044c',
+  stop: '\u041e\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c',
+  started: '\u0417\u0430\u043f\u0443\u0449\u0435\u043d\u043e',
+  stopped: '\u041e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e',
+  stateFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u0441\u043b\u0443\u0448\u0430\u0442\u0435\u043b\u044f',
+  savedFoldersFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u043f\u043a\u0438',
+  refreshFoldersFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0438 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0430',
+  toggleFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0441\u043b\u0443\u0448\u0430\u0442\u0435\u043b\u044c',
+  returnToUnchecked: '\u0412\u0435\u0440\u043d\u0443\u0442\u044c \u0432 \u043d\u0435\u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
+  deleteChannels: '\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b',
+  selectChannel: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u043a\u0430\u043d\u0430\u043b',
+  selected: '\u0432\u044b\u0431\u0440\u0430\u043d\u043e',
+  deleteSelected: '\u0423\u0434\u0430\u043b\u0438\u0442\u044c',
+  chooseChannels: '\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435',
+  selectedFolderMissing: '\u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f \u043f\u0430\u043f\u043a\u0430 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442 \u043d\u0430 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0435. \u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0430\u043f\u043e\u043a \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.',
+};
+
+function getChannelInitials(title: string) {
+  return (title || 'CH')
+    .split(/\s|_/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'CH';
 }
 
-function FolderChannelsTable() {
+function ChannelAvatar({ src, title, size = 'normal' }: { src: string; title: string; size?: 'normal' | 'small' }) {
+  const avatarUrl = api.mediaUrl(src);
+  if (!avatarUrl) {
+    return <span className={`channelAvatar channelAvatarFallback ${size}`}>{getChannelInitials(title)}</span>;
+  }
+
+  return <img className={`channelAvatar ${size}`} src={avatarUrl} alt="" loading="lazy" title={title} />;
+}
+
+function channelMatchesSearch(channel: ApiFolderChannel, normalizedSearch: string) {
+  return (
+    !normalizedSearch ||
+    channel.title.toLowerCase().includes(normalizedSearch) ||
+    channel.url.toLowerCase().includes(normalizedSearch) ||
+    channel.username.toLowerCase().includes(normalizedSearch)
+  );
+}
+
+function FolderChannelsTable({ channels, isLoading }: { channels: ApiFolderChannel[]; isLoading: boolean }) {
   const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState('');
 
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredChannels = useMemo(
-    () =>
-      mockFolderChannels.filter((channel) => {
-        return (
-          !normalizedSearch ||
-          channel.title.toLowerCase().includes(normalizedSearch) ||
-          channel.url.toLowerCase().includes(normalizedSearch)
-        );
-      }),
-    [normalizedSearch],
+    () => channels.filter((channel) => channelMatchesSearch(channel, normalizedSearch)),
+    [channels, normalizedSearch],
   );
 
   return (
     <section className="folderChannelsPanel">
       <header className="panelHeader folderChannelsHeader">
         <div>
-          <h2>Каналы</h2>
+          <h2>{folderUi.channels}</h2>
         </div>
         <label className="channelSearch">
           <Search size={16} />
-          <input
-            value={searchValue}
-            onChange={(event) => setSearchValue(event.target.value)}
-            placeholder="Поиск по названию или ссылке"
-          />
+          <input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder={folderUi.search} />
         </label>
       </header>
       <div className="animatedTableShell">
@@ -895,89 +758,64 @@ function FolderChannelsTable() {
           <table className="folderChannelsTable">
             <thead>
               <tr>
-                <th>Канал</th>
-                <th>Подписчики</th>
+                <th>{folderUi.channel}</th>
+                <th>{folderUi.subscribers}</th>
                 <th>Avg views</th>
-                <th>Папка</th>
-                <th>Дата добавления</th>
+                <th>{folderUi.folder}</th>
+                <th>{folderUi.addedAt}</th>
               </tr>
             </thead>
             <tbody>
               {filteredChannels.length ? (
                 filteredChannels.map((channel, index) => {
-                const isExpanded = expandedChannelId === channel.id;
+                  const isExpanded = expandedChannelId === channel.id;
 
-                return (
-                  <motion.tr
-                    className="folderChannelRow"
-                    data-index={index}
-                    initial={{ scale: 0.97, opacity: 0 }}
-                    whileInView={{ scale: 1, opacity: 1 }}
-                    viewport={{ amount: 0.42, once: false }}
-                    transition={{ duration: 0.2, delay: 0.04 }}
-                    key={channel.id}
-                  >
-                    <td>
-                      <div className="channelIdentity">
-                        <ChannelAvatar src={channel.avatarUrl} title={channel.title} />
-                        <a href={channel.url} target="_blank" rel="noreferrer">
-                          {channel.title}
-                          <ExternalLink size={14} aria-hidden="true" />
-                        </a>
-                      </div>
-                    </td>
-                    <td className="metricCell">{formatMetric(channel.subscribers)}</td>
-                    <td className="metricCell">{formatMetric(channel.avgViews)}</td>
-                    <td>
-                      <div className="folderSourceCell">
-                        {channel.sourceChannels.length > 0 ? (
-                          <>
-                            <button
-                              className={`sourceToggle${isExpanded ? ' isOpen' : ''}`}
-                              type="button"
-                              onClick={() => setExpandedChannelId((value) => (value === channel.id ? null : channel.id))}
-                              aria-label="Показать каналы папки"
-                            >
-                              <span>{formatChannelsCount(channel.sourceChannels.length)}</span>
-                              <ChevronDown size={15} />
-                            </button>
-                            <AnimatePresence initial={false}>
-                              {isExpanded && (
-                                <motion.div
-                                  className="sourceChannelsList"
-                                  initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                                  exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                                  transition={{ duration: 0.16 }}
-                                >
-                                  {channel.sourceChannels.map((source, sourceIndex) => (
-                                    <motion.div
-                                      className="sourceChannelItem"
-                                      initial={{ opacity: 0, x: -6 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ duration: 0.16, delay: sourceIndex * 0.035 }}
-                                      key={source.id}
-                                    >
-                                      <ChannelAvatar src={source.avatarUrl} title={source.title} size="small" />
-                                      <span>{source.title}</span>
-                                    </motion.div>
-                                  ))}
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </>
-                        ) : (
-                          <span className="folderSourceDash">&mdash;</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="mutedText">{formatDateTime(channel.addedAt)}</td>
-                  </motion.tr>
-                );
-              })
+                  return (
+                    <motion.tr className="folderChannelRow" data-index={index} initial={{ scale: 0.97, opacity: 0 }} whileInView={{ scale: 1, opacity: 1 }} viewport={{ amount: 0.42, once: false }} transition={{ duration: 0.2, delay: 0.04 }} key={channel.id}>
+                      <td>
+                        <div className="channelIdentity">
+                          <ChannelAvatar src={channel.avatar_url} title={channel.title} />
+                          <a href={channel.url} target="_blank" rel="noreferrer">
+                            {channel.title}
+                            <ExternalLink size={14} aria-hidden="true" />
+                          </a>
+                        </div>
+                      </td>
+                      <td className="metricCell">{formatMetric(channel.subscribers)}</td>
+                      <td className="metricCell">{formatMetric(channel.avg_views)}</td>
+                      <td>
+                        <div className="folderSourceCell">
+                          {channel.source_channels.length > 0 ? (
+                            <>
+                              <button className={`sourceToggle${isExpanded ? ' isOpen' : ''}`} type="button" onClick={() => setExpandedChannelId((value) => (value === channel.id ? null : channel.id))} aria-label={folderUi.showFolderChannels}>
+                                <span>{formatChannelsCount(channel.source_channels.length)}</span>
+                                <ChevronDown size={15} />
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {isExpanded && (
+                                  <motion.div className="sourceChannelsList" initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.98 }} transition={{ duration: 0.16 }}>
+                                    {channel.source_channels.map((source, sourceIndex) => (
+                                      <motion.div className="sourceChannelItem" initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, delay: sourceIndex * 0.035 }} key={source.id}>
+                                        <ChannelAvatar src={source.avatar_url} title={source.title} size="small" />
+                                        <span>{source.title}</span>
+                                      </motion.div>
+                                    ))}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </>
+                          ) : (
+                            <span className="folderSourceDash">&mdash;</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="mutedText">{formatDateTime(channel.added_at)}</td>
+                    </motion.tr>
+                  );
+                })
               ) : (
                 <tr>
-                  <td className="emptyCell" colSpan={5}>Каналы не найдены</td>
+                  <td className="emptyCell" colSpan={5}>{isLoading ? folderUi.loadingChannels : folderUi.noChannels}</td>
                 </tr>
               )}
             </tbody>
@@ -989,310 +827,314 @@ function FolderChannelsTable() {
   );
 }
 
-function FolderLogsConsole({ logs, onClear }: { logs: FolderLogEntry[]; onClear: () => void }) {
-  const logLabels: Record<FolderLogType, string> = {
-    info: 'INFO',
-    success: 'OK',
-    warn: 'WARN',
-    system: 'SYSTEM',
-    scan: 'SCAN',
-  };
+function ChannelsPage() {
+  const [channels, setChannels] = useState<ApiFolderChannel[]>([]);
+  const [activeFilter, setActiveFilter] = useState<ChannelReviewFilter>('all');
+  const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState('');
+  const [isLoadingChannels, setIsLoadingChannels] = useState(true);
+  const [channelsError, setChannelsError] = useState('');
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
 
+  async function loadChannels() {
+    setChannelsError('');
+    setIsLoadingChannels(true);
+    try {
+      const payload = await api.listChannels();
+      setChannels(payload.items);
+    } catch (err) {
+      setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
+    } finally {
+      setIsLoadingChannels(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadChannels();
+  }, []);
+
+  const counts = useMemo(
+    () => ({
+      all: channels.filter((channel) => channel.check_status !== 'rejected').length,
+      checked: channels.filter((channel) => channel.check_status === 'checked').length,
+      unchecked: channels.filter((channel) => channel.check_status === 'unchecked').length,
+      rejected: channels.filter((channel) => channel.check_status === 'rejected').length,
+    }),
+    [channels],
+  );
+
+  const normalizedSearch = searchValue.trim().toLowerCase();
+  const visibleChannels = useMemo(
+    () =>
+      channels.filter((channel) => {
+        const matchesFilter = (activeFilter === 'all' && channel.check_status !== 'rejected') || (activeFilter !== 'all' && channel.check_status === activeFilter);
+        return matchesFilter && channelMatchesSearch(channel, normalizedSearch);
+      }),
+    [activeFilter, channels, normalizedSearch],
+  );
+  const visibleChannelIds = useMemo(() => visibleChannels.map((channel) => channel.channel_id), [visibleChannels]);
+  const allVisibleSelected = visibleChannelIds.length > 0 && visibleChannelIds.every((channelId) => selectedChannelIds.includes(channelId));
+
+  function toggleSelectedChannel(channelId: number) {
+    setSelectedChannelIds((items) => (items.includes(channelId) ? items.filter((item) => item !== channelId) : [...items, channelId]));
+  }
+
+  function toggleVisibleChannels() {
+    setSelectedChannelIds((items) => {
+      if (allVisibleSelected) {
+        return items.filter((channelId) => !visibleChannelIds.includes(channelId));
+      }
+      return Array.from(new Set([...items, ...visibleChannelIds]));
+    });
+  }
+
+  async function approveChannel(channelId: number) {
+    await api.approveChannel(channelId);
+    setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'checked' } : channel)));
+  }
+
+  async function rejectChannel(channelId: number) {
+    await api.rejectChannel(channelId);
+    setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'rejected' } : channel)));
+  }
+
+  async function resetChannel(channelId: number) {
+    await api.resetChannel(channelId);
+    setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'unchecked' } : channel)));
+  }
+
+  async function toggleDeleteMode() {
+    if (deleteMode && selectedChannelIds.length) {
+      await api.deleteChannels(selectedChannelIds);
+      setChannels((items) => items.filter((channel) => !selectedChannelIds.includes(channel.channel_id)));
+      setSelectedChannelIds([]);
+      setDeleteMode(false);
+      return;
+    }
+    setDeleteMode((value) => !value);
+    setSelectedChannelIds([]);
+  }
+
+  const filters: Array<{ id: ChannelReviewFilter; label: string; count: number }> = [
+    { id: 'all', label: folderUi.all, count: counts.all },
+    { id: 'checked', label: folderUi.checked, count: counts.checked },
+    { id: 'unchecked', label: folderUi.unchecked, count: counts.unchecked },
+    { id: 'rejected', label: folderUi.rejected, count: counts.rejected },
+  ];
+
+  return (
+    <>
+      <header className="topBar"><div><h1>{folderUi.channels}</h1></div></header>
+      <section className="folderChannelsPanel channelsReviewPanel">
+        <header className="panelHeader folderChannelsHeader">
+          <div><h2>{folderUi.channels}</h2></div>
+          <div className="channelHeaderTools">
+            <label className="channelSearch"><Search size={16} /><input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder={folderUi.search} /></label>
+            <button className={`inlineIconButton deleteModeButton${deleteMode ? ' isActive' : ''}`} type="button" onClick={() => void toggleDeleteMode()} title={folderUi.deleteChannels} aria-label={folderUi.deleteChannels}>
+              <Trash2 size={16} />
+              {deleteMode && <span>{selectedChannelIds.length > 0 ? `${folderUi.deleteSelected} ${selectedChannelIds.length}` : folderUi.chooseChannels}</span>}
+            </button>
+          </div>
+        </header>
+        <div className="channelFilterBar">
+          {filters.map((filter) => (
+            <button className={`channelFilterButton${activeFilter === filter.id ? ' isActive' : ''}`} type="button" onClick={() => setActiveFilter(filter.id)} key={filter.id}>{filter.label} <span>({filter.count})</span></button>
+          ))}
+        </div>
+        {channelsError && <div className="folderInlineError">{channelsError}</div>}
+        <div className="animatedTableShell">
+          <div className="animatedTableGradient top" />
+          <div className="folderChannelsScroll channelsReviewScroll">
+            <table className="folderChannelsTable channelReviewTable">
+              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{deleteMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th>{folderUi.subscribers}</th><th>Avg views</th><th>{folderUi.folder}</th><th>{folderUi.addedAt}</th><th>{folderUi.review}</th></tr></thead>
+              <tbody>
+                {visibleChannels.length ? visibleChannels.map((channel, index) => {
+                  const isExpanded = expandedChannelId === channel.id;
+                  const isSelected = selectedChannelIds.includes(channel.channel_id);
+                  return (
+                    <motion.tr className="folderChannelRow" data-index={index} initial={{ scale: 0.97, opacity: 0 }} whileInView={{ scale: 1, opacity: 1 }} viewport={{ amount: 0.42, once: false }} transition={{ duration: 0.2, delay: 0.04 }} key={channel.id}>
+                      <td>
+                        <div className="channelIdentity">
+                          <span className="channelSelectSlot">
+                            {deleteMode && (
+                              <button className={`channelSelectBox${isSelected ? ' isSelected' : ''}`} type="button" onClick={() => toggleSelectedChannel(channel.channel_id)} title={folderUi.selectChannel} aria-label={folderUi.selectChannel}>
+                                {isSelected && <CheckCircle2 size={14} />}
+                              </button>
+                            )}
+                          </span>
+                          <ChannelAvatar src={channel.avatar_url} title={channel.title} />
+                          <a href={channel.url} target="_blank" rel="noreferrer">{channel.title}<ExternalLink size={14} aria-hidden="true" /></a>
+                        </div>
+                      </td>
+                      <td className="metricCell">{formatMetric(channel.subscribers)}</td>
+                      <td className="metricCell">{formatMetric(channel.avg_views)}</td>
+                      <td><div className="folderSourceCell">{channel.source_channels.length > 0 ? <><button className={`sourceToggle${isExpanded ? ' isOpen' : ''}`} type="button" onClick={() => setExpandedChannelId((value) => (value === channel.id ? null : channel.id))} aria-label={folderUi.showFolderChannels}><span>{formatChannelsCount(channel.source_channels.length)}</span><ChevronDown size={15} /></button><AnimatePresence initial={false}>{isExpanded && <motion.div className="sourceChannelsList" initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.98 }} transition={{ duration: 0.16 }}>{channel.source_channels.map((source, sourceIndex) => <motion.div className="sourceChannelItem" initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, delay: sourceIndex * 0.035 }} key={source.id}><ChannelAvatar src={source.avatar_url} title={source.title} size="small" /><span>{source.title}</span></motion.div>)}</motion.div>}</AnimatePresence></> : <span className="folderSourceDash">&mdash;</span>}</div></td>
+                      <td className="mutedText">{formatDateTime(channel.added_at)}</td>
+                      <td>
+                        {channel.check_status === 'checked' ? (
+                          <div className="channelReviewActions"><span className="channelReviewState checked" title={folderUi.approved} aria-label={folderUi.approved}><CheckCircle2 size={17} /></span><button className="inlineIconButton reset" type="button" onClick={() => void resetChannel(channel.channel_id)} title={folderUi.returnToUnchecked} aria-label={folderUi.returnToUnchecked}><RotateCcw size={16} /></button></div>
+                        ) : channel.check_status === 'rejected' ? (
+                          <div className="channelReviewActions"><span className="channelReviewState rejected" title={folderUi.rejectedOne} aria-label={folderUi.rejectedOne}><X size={17} /></span><button className="inlineIconButton reset" type="button" onClick={() => void resetChannel(channel.channel_id)} title={folderUi.returnToUnchecked} aria-label={folderUi.returnToUnchecked}><RotateCcw size={16} /></button></div>
+                        ) : (
+                          <div className="channelReviewActions"><button className="inlineIconButton approve" type="button" onClick={() => void approveChannel(channel.channel_id)} title={folderUi.approved} aria-label={folderUi.approved}><CheckCircle2 size={16} /></button><button className="inlineIconButton reject" type="button" onClick={() => void rejectChannel(channel.channel_id)} title={folderUi.rejectedOne} aria-label={folderUi.rejectedOne}><X size={16} /></button></div>
+                        )}
+                      </td>
+                    </motion.tr>
+                  );
+                }) : <tr><td className="emptyCell" colSpan={6}>{isLoadingChannels ? folderUi.loadingChannels : folderUi.noChannels}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="animatedTableGradient bottom" />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function FolderLogsConsole({ logs, onClear, isClearing }: { logs: FolderLog[]; onClear: () => void; isClearing: boolean }) {
+  const logLabels: Record<string, string> = { info: 'INFO', success: 'OK', warn: 'WARN', system: 'SYSTEM', scan: 'SCAN' };
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (body) body.scrollTop = body.scrollHeight;
+  }, [logs]);
   return (
     <section className="folderLogsPanel">
       <header className="folderLogsHeader">
-        <div>
-          <Terminal size={17} />
-          <h2>Консоль логов</h2>
-        </div>
-        <button
-          className="ghostButton clearLogsButton"
-          type="button"
-          onClick={onClear}
-          disabled={!logs.length}
-          title="Очистить логи"
-          aria-label="Очистить логи"
-        >
-          <Trash2 size={15} />
-        </button>
+        <div><Terminal size={17} /><h2>{folderUi.logsConsole}</h2></div>
+        <button className="ghostButton clearLogsButton" type="button" onClick={onClear} disabled={!logs.length || isClearing} title={folderUi.clearLogs} aria-label={folderUi.clearLogs}>{isClearing ? <Loader2 className="spinIcon" size={15} /> : <Trash2 size={15} />}</button>
       </header>
-      <div className="folderLogsBody">
-        {logs.length ? (
-          logs.map((log) => (
-            <div className="folderLogRow" key={log.id}>
-              <time>{formatLogTime(log.timestamp)}</time>
-              <span className={`folderLogType ${log.type}`}>{logLabels[log.type]}</span>
-              <p>{log.message}</p>
-            </div>
-          ))
-        ) : (
-          <div className="folderLogEmpty">Логов пока нет</div>
-        )}
+      <div className="folderLogsBody" ref={bodyRef}>
+        {logs.length ? logs.map((log) => <div className="folderLogRow" key={log.id}><time>{formatLogTime(log.timestamp)}</time><span className={`folderLogType ${log.type}`}>{logLabels[log.type] || log.type.toUpperCase()}</span><p>{log.message}</p></div>) : <div className="folderLogEmpty">{folderUi.noLogs}</div>}
       </div>
     </section>
   );
 }
 
 function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalUser: PortalUser | null }) {
+  void portalUser;
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [folders, setFolders] = useState<ApiFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState('');
   const [status, setStatus] = useState<ListenerStatus>('idle');
   const [isFetchingFolders, setIsFetchingFolders] = useState(false);
+  const [isTogglingListener, setIsTogglingListener] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<'account' | 'folder' | null>(null);
   const [folderError, setFolderError] = useState('');
-  const portalStorageUser = getPortalStorageUser(portalUser, accounts);
-  const folderLogsStorageKey = getFolderLogsStorageKey(portalStorageUser);
-  const activeLogsKeyRef = useRef(folderLogsStorageKey);
-  const [folderLogs, setFolderLogs] = useState<FolderLogEntry[]>(() => getStoredFolderLogs(folderLogsStorageKey));
+  const [folderChannels, setFolderChannels] = useState<ApiFolderChannel[]>([]);
+  const [isLoadingChannels, setIsLoadingChannels] = useState(false);
+  const [folderLogs, setFolderLogs] = useState<FolderLog[]>([]);
+  const [isClearingLogs, setIsClearingLogs] = useState(false);
 
-  useEffect(() => {
-    if (activeLogsKeyRef.current !== folderLogsStorageKey) {
-      activeLogsKeyRef.current = folderLogsStorageKey;
-      setFolderLogs(getStoredFolderLogs(folderLogsStorageKey));
-    }
-  }, [folderLogsStorageKey]);
-
-  useEffect(() => {
-    if (activeLogsKeyRef.current === folderLogsStorageKey) {
-      window.localStorage.setItem(folderLogsStorageKey, JSON.stringify(folderLogs));
-    }
-  }, [folderLogs, folderLogsStorageKey]);
-
-  function appendFolderLog(type: FolderLogType, message: string) {
-    setFolderLogs((items) => [...items, createFolderLog(type, message)].slice(-160));
+  async function loadFolderLogs() { const payload = await api.listFolderLogs(); setFolderLogs(payload.items); }
+  async function loadFolderChannels(accountId: number, folderId: string) {
+    if (!accountId || !folderId) { setFolderChannels([]); return; }
+    setIsLoadingChannels(true);
+    try { const payload = await api.listFolderChannels(accountId, folderId); setFolderChannels(payload.items); } finally { setIsLoadingChannels(false); }
+  }
+  async function loadListenerStatus(accountId: number, folderId: string) {
+    if (!accountId || !folderId) { setStatus('idle'); return; }
+    const payload = await api.getFolderListenerStatus(accountId, folderId);
+    setStatus(payload.status === 'running' ? 'running' : 'idle');
+  }
+  async function loadRuntimeState(accountId: number, folderId: string) {
+    setFolderError('');
+    try { await Promise.all([loadListenerStatus(accountId, folderId), loadFolderChannels(accountId, folderId), loadFolderLogs()]); } catch (err) { setFolderError(err instanceof Error ? err.message : folderUi.stateFailed); }
   }
 
   useEffect(() => {
-    if (!selectedAccountId && accounts.length) {
-      setSelectedAccountId(String(accounts[0].account_id));
-    }
-  }, [accounts, selectedAccountId]);
+    if (!accounts.length) return;
+    api.getActiveFolderListener()
+      .then((payload) => {
+        if (payload.status === 'running' && payload.account_id && payload.folder_id) {
+          setSelectedAccountId(String(payload.account_id));
+          setSelectedFolderId(String(payload.folder_id));
+          setStatus('running');
+        }
+      })
+      .catch(() => undefined);
+  }, [accounts.length]);
 
+  useEffect(() => { if (!selectedAccountId && accounts.length) setSelectedAccountId(String(accounts[0].account_id)); }, [accounts, selectedAccountId]);
   useEffect(() => {
     const accountId = Number(selectedAccountId);
-    if (!accountId) {
-      setFolders([]);
-      setSelectedFolderId('');
-      return;
-    }
-
+    if (!accountId) { setFolders([]); setSelectedFolderId(''); setFolderChannels([]); setStatus('idle'); return; }
     setFolderError('');
-    api.listAccountFolders(accountId)
-      .then((payload) => {
-        setFolders(payload.items);
-        setSelectedFolderId(payload.items[0]?.id || '');
-      })
-      .catch((err: unknown) => {
-        setFolders([]);
-        setSelectedFolderId('');
-        setFolderError(err instanceof Error ? err.message : 'Не удалось загрузить сохраненные папки');
-      });
+    api.listAccountFolders(accountId).then((payload) => { setFolders(payload.items); setSelectedFolderId((current) => (payload.items.some((item) => item.id === current) ? current : payload.items[0]?.id || '')); }).catch((err: unknown) => { setFolders([]); setSelectedFolderId(''); setFolderChannels([]); setStatus('idle'); setFolderError(err instanceof Error ? err.message : folderUi.savedFoldersFailed); });
   }, [selectedAccountId]);
+  useEffect(() => {
+    const accountId = Number(selectedAccountId);
+    if (!accountId || !selectedFolderId) { setFolderChannels([]); setStatus('idle'); void loadFolderLogs().catch(() => undefined); return; }
+    void loadRuntimeState(accountId, selectedFolderId);
+  }, [selectedAccountId, selectedFolderId]);
+  useEffect(() => {
+    if (status !== 'running') return undefined;
+    const timer = window.setInterval(() => { const accountId = Number(selectedAccountId); if (accountId && selectedFolderId) void Promise.all([loadListenerStatus(accountId, selectedFolderId), loadFolderChannels(accountId, selectedFolderId), loadFolderLogs()]).catch(() => undefined); }, 3500);
+    return () => window.clearInterval(timer);
+  }, [selectedAccountId, selectedFolderId, status]);
 
   async function fetchFolders() {
     const accountId = Number(selectedAccountId);
-    if (!accountId) {
-      return;
-    }
-
-    setOpenDropdown(null);
-    setFolderError('');
-    setIsFetchingFolders(true);
-    appendFolderLog('scan', 'Получаю список папок аккаунта');
+    if (!accountId) return;
+    setOpenDropdown(null); setFolderError(''); setIsFetchingFolders(true);
     try {
       const payload = await api.refreshAccountFolders(accountId);
+      const nextFolderId = payload.items.some((item) => item.id === selectedFolderId) ? selectedFolderId : payload.items[0]?.id || '';
       setFolders(payload.items);
-      setSelectedFolderId(payload.items[0]?.id || '');
-      appendFolderLog(payload.items.length ? 'success' : 'warn', payload.items.length ? `Получено папок: ${payload.items.length}` : 'На аккаунте папки не найдены');
-    } catch (err) {
-      setFolders([]);
-      setSelectedFolderId('');
-      setFolderError(err instanceof Error ? err.message : 'Не удалось получить папки аккаунта');
-      appendFolderLog('warn', 'Не удалось получить папки аккаунта');
-    } finally {
-      setIsFetchingFolders(false);
-    }
+      setSelectedFolderId(nextFolderId);
+      if (nextFolderId) {
+        await api.syncAccountFolder(accountId, nextFolderId);
+        await loadFolderChannels(accountId, nextFolderId);
+      } else {
+        setFolderChannels([]);
+      }
+    } catch (err) { setFolders([]); setSelectedFolderId(''); setFolderChannels([]); setStatus('idle'); setFolderError(err instanceof Error ? err.message : folderUi.refreshFoldersFailed); } finally { setIsFetchingFolders(false); }
   }
-
-  function toggleListening() {
-    if (!selectedAccountId || !selectedFolderId) {
-      return;
-    }
-    setOpenDropdown(null);
-    const nextStatus = status === 'running' ? 'idle' : 'running';
-    setStatus(nextStatus);
-    appendFolderLog(nextStatus === 'running' ? 'system' : 'warn', nextStatus === 'running' ? 'Парсер запущен' : 'Парсер остановлен');
+  async function toggleListening() {
+    const accountId = Number(selectedAccountId);
+    if (!accountId || !selectedFolderId) return;
+    setOpenDropdown(null); setFolderError(''); setIsTogglingListener(true);
+    try {
+      if (status !== 'running') {
+        const foldersPayload = await api.refreshAccountFolders(accountId);
+        setFolders(foldersPayload.items);
+        if (!foldersPayload.items.some((folderItem) => folderItem.id === selectedFolderId)) {
+          setSelectedFolderId('');
+          setStatus('idle');
+          setFolderChannels([]);
+          setFolderError(folderUi.selectedFolderMissing);
+          await loadFolderLogs();
+          return;
+        }
+      }
+      const payload = status === 'running' ? await api.stopFolderListener(accountId, selectedFolderId) : await api.startFolderListener(accountId, selectedFolderId);
+      setStatus(payload.status === 'running' ? 'running' : 'idle');
+      await Promise.all([loadFolderChannels(accountId, selectedFolderId), loadFolderLogs()]);
+    } catch (err) { setFolderError(err instanceof Error ? err.message : folderUi.toggleFailed); } finally { setIsTogglingListener(false); }
   }
+  async function clearFolderLogs() { setIsClearingLogs(true); try { await api.clearFolderLogs(); setFolderLogs([]); } finally { setIsClearingLogs(false); } }
 
   const selectedAccount = accounts.find((account) => String(account.account_id) === selectedAccountId);
   const selectedFolder = folders.find((folderItem) => folderItem.id === selectedFolderId);
 
   return (
     <>
-      <header className="topBar">
-        <div>
-          <h1>Папки</h1>
-        </div>
-      </header>
-
+      <header className="topBar"><div><h1>{folderUi.folders}</h1></div></header>
       <section className="folderControlPanel">
-        <header className="panelHeader folderPanelHeader">
-          <div>
-            <h2>Слушатель папки</h2>
-          </div>
-        </header>
-
+        <header className="panelHeader folderPanelHeader"><div><h2>{folderUi.listener}</h2></div></header>
         <div className="folderControls">
-          <div className="fieldBlock">
-            <span>Аккаунт</span>
-            <div className={`customSelect accountSelect${openDropdown === 'account' ? ' isOpen' : ''}`}>
-              <button
-                className="customSelectButton"
-                type="button"
-                onClick={() => setOpenDropdown((value) => (value === 'account' ? null : 'account'))}
-                disabled={!accounts.length}
-              >
-                {selectedAccount ? (
-                  <span className="selectAccountValue">
-                    <Avatar item={selectedAccount} />
-                    <span>
-                      <strong>{getDisplayName(selectedAccount)}</strong>
-                      <em>{selectedAccount.username || '@unknown'}</em>
-                    </span>
-                  </span>
-                ) : (
-                  <span className="selectPlaceholder">Нет аккаунтов</span>
-                )}
-                <ChevronDown size={16} />
-              </button>
-              {openDropdown === 'account' && (
-                <div className="customSelectMenu">
-                {accounts.length ? (
-                  accounts.map((account) => (
-                    <button
-                      className={`customSelectOption accountOption${String(account.account_id) === selectedAccountId ? ' isSelected' : ''}`}
-                      type="button"
-                      onClick={() => {
-                        setSelectedAccountId(String(account.account_id));
-                        setFolderError('');
-                        setStatus('idle');
-                        setOpenDropdown(null);
-                      }}
-                      key={account.account_id}
-                    >
-                      <Avatar item={account} />
-                      <span>
-                        <strong>{getDisplayName(account)}</strong>
-                        <em>{account.username || '@unknown'}</em>
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <span className="customSelectEmpty">Нет аккаунтов</span>
-                )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <button
-            className="iconButton folderFetchButton"
-            type="button"
-            onClick={fetchFolders}
-            disabled={!selectedAccountId || isFetchingFolders}
-            title="Получить папки"
-            aria-label="Получить папки"
-          >
-            {isFetchingFolders ? <Loader2 className="spinIcon" size={17} /> : <RefreshCw size={17} />}
-          </button>
-
-          <div className="fieldBlock">
-            <span>Папка</span>
-            <div className={`customSelect${openDropdown === 'folder' ? ' isOpen' : ''}`}>
-              <button
-                className="customSelectButton"
-                type="button"
-                onClick={() => setOpenDropdown((value) => (value === 'folder' ? null : 'folder'))}
-              >
-                <span className="selectFolderValue">{selectedFolder?.title || (folders.length ? 'Не выбрана' : 'Папок нет')}</span>
-                <ChevronDown size={16} />
-              </button>
-              {openDropdown === 'folder' && (
-                <div className="customSelectMenu">
-                {folders.length ? (
-                  folders.map((folderItem) => (
-                    <button
-                      className={`customSelectOption folderOption${folderItem.id === selectedFolderId ? ' isSelected' : ''}`}
-                      type="button"
-                      onClick={() => {
-                        setSelectedFolderId(folderItem.id);
-                        setOpenDropdown(null);
-                      }}
-                      key={folderItem.id}
-                    >
-                      <FolderOpen size={17} />
-                      <span>
-                        <strong>{folderItem.title}</strong>
-                        <em>{folderItem.channels} каналов</em>
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <span className="customSelectEmpty">Папок нет</span>
-                )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="folderRunBar">
-            <button className="primaryButton" type="button" onClick={toggleListening} disabled={!selectedAccountId || !selectedFolderId}>
-              {status === 'running' ? <Square size={16} /> : <Play size={16} />}
-              {status === 'running' ? 'Остановить' : 'Запустить'}
-            </button>
-            <span
-              className={`listenerDot ${status}`}
-              title={status === 'running' ? 'Запущено' : 'Остановлено'}
-              aria-label={status === 'running' ? 'Запущено' : 'Остановлено'}
-            />
-          </div>
+          <div className="fieldBlock"><span>{folderUi.account}</span><div className={`customSelect accountSelect${openDropdown === 'account' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'account' ? null : 'account'))} disabled={!accounts.length || status === 'running'}>{selectedAccount ? <span className="selectAccountValue"><Avatar item={selectedAccount} /><span><strong>{getDisplayName(selectedAccount)}</strong><em>{selectedAccount.username || '@unknown'}</em></span></span> : <span className="selectPlaceholder">{folderUi.noAccounts}</span>}<ChevronDown size={16} /></button>{openDropdown === 'account' && <div className="customSelectMenu">{accounts.length ? accounts.map((account) => <button className={`customSelectOption accountOption${String(account.account_id) === selectedAccountId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedAccountId(String(account.account_id)); setFolderError(''); setStatus('idle'); setOpenDropdown(null); }} key={account.account_id}><Avatar item={account} /><span><strong>{getDisplayName(account)}</strong><em>{account.username || '@unknown'}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noAccounts}</span>}</div>}</div></div>
+          <button className="iconButton folderFetchButton" type="button" onClick={fetchFolders} disabled={!selectedAccountId || isFetchingFolders || status === 'running'} title={folderUi.getFolders} aria-label={folderUi.getFolders}>{isFetchingFolders ? <Loader2 className="spinIcon" size={17} /> : <RefreshCw size={17} />}</button>
+          <div className="fieldBlock"><span>{folderUi.folder}</span><div className={`customSelect${openDropdown === 'folder' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'folder' ? null : 'folder'))} disabled={status === 'running'}><span className="selectFolderValue">{selectedFolder?.title || (folders.length ? folderUi.noFolderSelected : folderUi.noFolders)}</span><ChevronDown size={16} /></button>{openDropdown === 'folder' && <div className="customSelectMenu">{folders.length ? folders.map((folderItem) => <button className={`customSelectOption folderOption${folderItem.id === selectedFolderId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedFolderId(folderItem.id); setOpenDropdown(null); }} key={folderItem.id}><FolderOpen size={17} /><span><strong>{folderItem.title}</strong><em>{folderItem.channels} {folderUi.channelsCount}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noFolders}</span>}</div>}</div></div>
+          <div className="folderRunBar"><button className="primaryButton" type="button" onClick={() => void toggleListening()} disabled={!selectedAccountId || !selectedFolderId || isTogglingListener}>{isTogglingListener ? <Loader2 className="spinIcon" size={16} /> : status === 'running' ? <Square size={16} /> : <Play size={16} />}{status === 'running' ? folderUi.stop : folderUi.start}</button><span className={`listenerDot ${status}`} title={status === 'running' ? folderUi.started : folderUi.stopped} aria-label={status === 'running' ? folderUi.started : folderUi.stopped} /></div>
         </div>
-
         {folderError && <div className="folderInlineError">{folderError}</div>}
       </section>
-
-      <section className="folderSnapshotGrid">
-        <article className="folderSnapshot wide">
-          <span>
-            <UserRoundCog size={18} />
-          </span>
-          <div>
-            <p>Аккаунт</p>
-            <strong>{selectedAccount ? getDisplayName(selectedAccount) : '—'}</strong>
-          </div>
-        </article>
-        <article className="folderSnapshot">
-          <span>
-            <FolderOpen size={18} />
-          </span>
-          <div>
-            <p>Папка</p>
-            <strong>{selectedFolder?.title || '—'}</strong>
-          </div>
-        </article>
-        <article className="folderSnapshot">
-          <span>
-            <RadioTower size={18} />
-          </span>
-          <div>
-            <p>Каналов</p>
-            <strong>{selectedFolder?.channels ?? '—'}</strong>
-          </div>
-        </article>
-      </section>
-      <FolderChannelsTable />
-      <FolderLogsConsole logs={folderLogs} onClear={() => setFolderLogs([])} />
+      <section className="folderSnapshotGrid"><article className="folderSnapshot wide"><span><UserRoundCog size={18} /></span><div><p>{folderUi.account}</p><strong>{selectedAccount ? getDisplayName(selectedAccount) : '?'}</strong></div></article><article className="folderSnapshot"><span><FolderOpen size={18} /></span><div><p>{folderUi.folder}</p><strong>{selectedFolder?.title || '?'}</strong></div></article><article className="folderSnapshot"><span><RadioTower size={18} /></span><div><p>{folderUi.channels}</p><strong>{folderChannels.length || selectedFolder?.channels || '?'}</strong></div></article></section>
+      <FolderChannelsTable channels={folderChannels} isLoading={isLoadingChannels} />
+      <FolderLogsConsole logs={folderLogs} onClear={() => void clearFolderLogs()} isClearing={isClearingLogs} />
     </>
   );
 }
@@ -1456,9 +1298,10 @@ export function App() {
           </>
         )}
         {activePage === 'folder' && <FoldersPage accounts={accounts} portalUser={portalUser} />}
-        {(activePage === 'chat' || activePage === 'channels') && (
+        {activePage === 'channels' && <ChannelsPage />}
+        {activePage === 'chat' && (
           <section className="placeholderPanel">
-            <h1>{activePage === 'chat' ? 'Chat' : 'Каналы'}</h1>
+            <h1>Chat</h1>
           </section>
         )}
       </section>

@@ -51,7 +51,6 @@ desktop.ini
 .idea/
 .vscode/
 
-# Keep project knowledge base and agent rules in Git
-!AGENTS.md
-!vault/
-!vault/**
+# Local project knowledge base and agent rules
+AGENTS.md
+vault/

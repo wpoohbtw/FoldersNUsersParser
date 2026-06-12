@@ -423,7 +423,20 @@ class ImportService:
                     continue
 
                 include_peers = list(getattr(folder_filter, "include_peers", []) or [])
-                channel_peers = [peer for peer in include_peers if peer.__class__.__name__ in {"InputPeerChannel", "InputPeerChannelFromMessage"}]
+                pinned_peers = list(getattr(folder_filter, "pinned_peers", []) or [])
+                exclude_peers = list(getattr(folder_filter, "exclude_peers", []) or [])
+                excluded_ids = {
+                    int(getattr(peer, "channel_id", 0) or 0)
+                    for peer in exclude_peers
+                    if int(getattr(peer, "channel_id", 0) or 0) > 0
+                }
+                channel_ids = {
+                    int(getattr(peer, "channel_id", 0) or 0)
+                    for peer in [*include_peers, *pinned_peers]
+                    if peer.__class__.__name__ in {"InputPeerChannel", "InputPeerChannelFromMessage"}
+                    and int(getattr(peer, "channel_id", 0) or 0) > 0
+                    and int(getattr(peer, "channel_id", 0) or 0) not in excluded_ids
+                }
                 title = self._dialog_filter_title(folder_filter)
                 if not title:
                     continue
@@ -432,7 +445,7 @@ class ImportService:
                     {
                         "id": str(folder_id),
                         "title": title,
-                        "channels": len(channel_peers),
+                        "channels": len(channel_ids),
                         "peers": len(include_peers),
                     }
                 )

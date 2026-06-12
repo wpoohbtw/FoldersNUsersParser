@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,11 +14,23 @@ INITIAL_OWNER_MIGRATION_KEY = "bind_existing_accounts_to_wpoohbtw_v1"
 
 class Database:
     def __init__(self, db_path: Path) -> None:
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA busy_timeout=10000")
+
+    def __getattribute__(self, name: str) -> Any:
+        attr = object.__getattribute__(self, name)
+        if name.startswith("_") or not callable(attr) or getattr(attr, "__self__", None) is not self:
+            return attr
+
+        def locked_method(*args: Any, **kwargs: Any) -> Any:
+            with object.__getattribute__(self, "_lock"):
+                return attr(*args, **kwargs)
+
+        return locked_method
 
     def init(self) -> None:
         cur = self.conn.cursor()
@@ -120,6 +134,8 @@ class Database:
                 portal_user_id TEXT,
                 portal_username TEXT,
                 channel_id INTEGER NOT NULL,
+                account_id INTEGER,
+                folder_id TEXT,
                 username TEXT,
                 title TEXT NOT NULL,
                 link TEXT,
@@ -128,6 +144,7 @@ class Database:
                 avg_views_10 INTEGER NOT NULL DEFAULT 0,
                 source_count INTEGER NOT NULL DEFAULT 0,
                 source_channels_json TEXT,
+                review_status TEXT NOT NULL DEFAULT 'unchecked',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -143,6 +160,7 @@ class Database:
                 link_url TEXT NOT NULL,
                 first_channel_id INTEGER,
                 channels_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'processing',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -230,6 +248,10 @@ class Database:
             ("accounts", "checked_at", "TEXT"),
             ("import_jobs", "portal_user_id", "TEXT"),
             ("import_jobs", "portal_username", "TEXT"),
+            ("folder_channels", "account_id", "INTEGER"),
+            ("folder_channels", "folder_id", "TEXT"),
+            ("folder_channels", "review_status", "TEXT NOT NULL DEFAULT 'unchecked'"),
+            ("processed_folder_links", "status", "TEXT NOT NULL DEFAULT 'processing'"),
         ):
             self._ensure_column(table, column, definition)
         self.conn.execute(
@@ -627,6 +649,427 @@ class Database:
                 )
             else:
                 self.conn.execute("DELETE FROM account_folders WHERE account_id = ?", (int(account_id),))
+
+    def upsert_folder_listener(
+        self,
+        account_id: int,
+        folder_id: str,
+        folder_title: str,
+        status: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> int:
+        now = _utc_now()
+        existing = self.get_folder_listener(account_id, folder_id, portal_user_id, portal_username)
+        if existing:
+            self.conn.execute(
+                """
+                UPDATE folder_listeners
+                SET folder_title = ?, status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (folder_title, status, now, int(existing["id"])),
+            )
+            self.conn.commit()
+            return int(existing["id"])
+
+        cur = self.conn.execute(
+            """
+            INSERT INTO folder_listeners(
+                portal_user_id, portal_username, account_id, folder_id, folder_title, status, created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (portal_user_id or None, portal_username or None, int(account_id), str(folder_id), folder_title, status, now, now),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def set_folder_listener_status(
+        self,
+        account_id: int,
+        folder_id: str,
+        status: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        self.conn.execute(
+            f"""
+            UPDATE folder_listeners
+            SET status = ?, updated_at = ?
+            WHERE account_id = ? AND folder_id = ? AND {where}
+            """,
+            (status, _utc_now(), int(account_id), str(folder_id), *args),
+        )
+        self.conn.commit()
+
+    def get_folder_listener(
+        self,
+        account_id: int,
+        folder_id: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict | None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        row = self.conn.execute(
+            f"""
+            SELECT * FROM folder_listeners
+            WHERE account_id = ? AND folder_id = ? AND {where}
+            LIMIT 1
+            """,
+            (int(account_id), str(folder_id), *args),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_running_folder_listeners(self) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM folder_listeners
+            WHERE status = 'running'
+            ORDER BY updated_at DESC, id DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_folder_log(
+        self,
+        log_type: str,
+        message: str,
+        listener_id: int | None = None,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO folder_parser_logs(portal_user_id, portal_username, listener_id, log_type, message, created_at)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (portal_user_id or None, portal_username or None, listener_id, log_type, message, _utc_now()),
+        )
+        self.conn.commit()
+
+    def list_folder_logs(self, portal_user_id: str = "", portal_username: str = "", limit: int = 200) -> list[dict]:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        rows = self.conn.execute(
+            f"""
+            SELECT id, log_type, message, created_at
+            FROM folder_parser_logs
+            WHERE {where}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (*args, int(limit)),
+        ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+    def clear_folder_logs(self, portal_user_id: str = "", portal_username: str = "") -> None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        self.conn.execute(f"DELETE FROM folder_parser_logs WHERE {where}", tuple(args))
+        self.conn.commit()
+
+    def is_folder_link_processed(self, slug: str, portal_user_id: str = "", portal_username: str = "") -> bool:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        row = self.conn.execute(
+            f"""
+            SELECT id FROM processed_folder_links
+            WHERE addlist_slug = ? AND {where}
+            LIMIT 1
+            """,
+            (slug, *args),
+        ).fetchone()
+        return row is not None
+
+    def start_folder_link_processing(
+        self,
+        slug: str,
+        link_url: str,
+        first_channel_id: int | None = None,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> bool:
+        now = _utc_now()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO processed_folder_links(
+                    portal_user_id, portal_username, addlist_slug, link_url, first_channel_id, status, created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, 'processing', ?, ?)
+                """,
+                (portal_user_id or None, portal_username or None, slug, link_url, first_channel_id, now, now),
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            where, args = self._owner_where(portal_user_id, portal_username)
+            row = self.conn.execute(
+                f"""
+                SELECT status FROM processed_folder_links
+                WHERE addlist_slug = ? AND {where}
+                LIMIT 1
+                """,
+                (slug, *args),
+            ).fetchone()
+            if row and str(row["status"] or "") in {"failed", "partial"}:
+                self.conn.execute(
+                    f"""
+                    UPDATE processed_folder_links
+                    SET link_url = ?, first_channel_id = ?, status = 'processing', updated_at = ?
+                    WHERE addlist_slug = ? AND {where}
+                    """,
+                    (link_url, first_channel_id, now, slug, *args),
+                )
+                self.conn.commit()
+                return True
+            return False
+
+    def finish_folder_link_processing(
+        self,
+        slug: str,
+        channels_count: int,
+        status: str = "done",
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        self.conn.execute(
+            f"""
+            UPDATE processed_folder_links
+            SET channels_count = ?, status = ?, updated_at = ?
+            WHERE addlist_slug = ? AND {where}
+            """,
+            (int(channels_count), status, _utc_now(), slug, *args),
+        )
+        self.conn.commit()
+
+    def upsert_folder_channel(
+        self,
+        channel_id: int,
+        title: str,
+        username: str = "",
+        link: str = "",
+        avatar_path: str = "",
+        subscribers: int = 0,
+        avg_views_10: int = 0,
+        source_channels: list[dict] | None = None,
+        account_id: int | None = None,
+        folder_id: str = "",
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> int | None:
+        if self.get_folder_channel_review_status(channel_id, portal_user_id, portal_username) == "rejected":
+            return None
+
+        now = _utc_now()
+        where, args = self._owner_where(portal_user_id, portal_username)
+        existing = self.conn.execute(
+            f"SELECT * FROM folder_channels WHERE channel_id = ? AND {where} LIMIT 1",
+            (int(channel_id), *args),
+        ).fetchone()
+
+        merged_sources = self._merge_folder_sources(
+            json.loads(existing["source_channels_json"] or "[]") if existing else [],
+            source_channels or [],
+        )
+        sources_json = json.dumps(merged_sources, ensure_ascii=False)
+        source_count = len(merged_sources)
+
+        if existing:
+            self.conn.execute(
+                """
+                UPDATE folder_channels
+                SET account_id = COALESCE(?, account_id),
+                    folder_id = COALESCE(?, folder_id),
+                    username = ?,
+                    title = ?,
+                    link = ?,
+                    avatar_path = COALESCE(NULLIF(?, ''), avatar_path),
+                    subscribers = ?,
+                    avg_views_10 = ?,
+                    source_count = ?,
+                    source_channels_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    int(account_id) if account_id is not None else None,
+                    str(folder_id) if folder_id else None,
+                    username,
+                    title,
+                    link,
+                    avatar_path,
+                    int(subscribers or 0),
+                    int(avg_views_10 or 0),
+                    source_count,
+                    sources_json,
+                    now,
+                    int(existing["id"]),
+                ),
+            )
+            self.conn.commit()
+            return int(existing["id"])
+
+        cur = self.conn.execute(
+            """
+            INSERT INTO folder_channels(
+                portal_user_id, portal_username, channel_id, account_id, folder_id, username, title, link,
+                avatar_path, subscribers, avg_views_10, source_count, source_channels_json, review_status,
+                created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unchecked', ?, ?)
+            """,
+            (
+                portal_user_id or None,
+                portal_username or None,
+                int(channel_id),
+                int(account_id) if account_id is not None else None,
+                str(folder_id) if folder_id else None,
+                username,
+                title,
+                link,
+                avatar_path,
+                int(subscribers or 0),
+                int(avg_views_10 or 0),
+                source_count,
+                sources_json,
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_folder_channel_review_status(self, channel_id: int, portal_user_id: str = "", portal_username: str = "") -> str:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        row = self.conn.execute(
+            f"SELECT review_status FROM folder_channels WHERE channel_id = ? AND {where} LIMIT 1",
+            (int(channel_id), *args),
+        ).fetchone()
+        return str(row["review_status"]) if row else ""
+
+    def list_folder_channels(
+        self,
+        account_id: int | None = None,
+        folder_id: str = "",
+        include_rejected: bool = True,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> list[dict]:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        clauses = [where]
+        query_args: list[Any] = list(args)
+        if account_id is not None:
+            clauses.append("account_id = ?")
+            query_args.append(int(account_id))
+        if folder_id:
+            clauses.append("folder_id = ?")
+            query_args.append(str(folder_id))
+        if not include_rejected:
+            clauses.append("review_status != 'rejected'")
+
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM folder_channels
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, id DESC
+            """,
+            tuple(query_args),
+        ).fetchall()
+        return [self._folder_channel_row_to_dict(row) for row in rows]
+
+    def set_folder_channel_review_status(
+        self,
+        channel_id: int,
+        review_status: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        self.conn.execute(
+            f"""
+            UPDATE folder_channels
+            SET review_status = ?, updated_at = ?
+            WHERE channel_id = ? AND {where}
+            """,
+            (review_status, _utc_now(), int(channel_id), *args),
+        )
+        self.conn.commit()
+
+    def unlink_stale_folder_channels(
+        self,
+        account_id: int,
+        folder_id: str,
+        keep_channel_ids: set[int],
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> int:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        query_args: list[Any] = [int(account_id), str(folder_id), *args]
+        keep_clause = ""
+        if keep_channel_ids:
+            placeholders = ",".join(["?"] * len(keep_channel_ids))
+            keep_clause = f" AND channel_id NOT IN ({placeholders})"
+            query_args.extend(sorted(int(channel_id) for channel_id in keep_channel_ids))
+
+        cur = self.conn.execute(
+            f"""
+            UPDATE folder_channels
+            SET account_id = NULL,
+                folder_id = NULL,
+                updated_at = ?
+            WHERE account_id = ?
+              AND folder_id = ?
+              AND {where}
+              {keep_clause}
+            """,
+            (_utc_now(), *query_args),
+        )
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def delete_folder_channels(self, channel_ids: list[int], portal_user_id: str = "", portal_username: str = "") -> int:
+        if not channel_ids:
+            return 0
+        where, args = self._owner_where(portal_user_id, portal_username)
+        placeholders = ",".join(["?"] * len(channel_ids))
+        cur = self.conn.execute(
+            f"""
+            DELETE FROM folder_channels
+            WHERE channel_id IN ({placeholders}) AND {where}
+            """,
+            (*[int(channel_id) for channel_id in channel_ids], *args),
+        )
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def _folder_channel_row_to_dict(self, row: sqlite3.Row) -> dict:
+        item = dict(row)
+        try:
+            item["source_channels"] = json.loads(item.get("source_channels_json") or "[]")
+        except Exception:
+            item["source_channels"] = []
+        return item
+
+    def _merge_folder_sources(self, current: list[dict], incoming: list[dict]) -> list[dict]:
+        merged: dict[str, dict] = {}
+        for source in [*current, *incoming]:
+            source_id = str(source.get("id") or "")
+            if not source_id:
+                continue
+            merged[source_id] = {
+                "id": source_id,
+                "title": source.get("title") or source_id,
+                "avatar_url": source.get("avatar_url") or "",
+            }
+        return list(merged.values())
+
+    def _owner_where(self, portal_user_id: str = "", portal_username: str = "") -> tuple[str, list[Any]]:
+        if portal_user_id:
+            return "portal_user_id = ?", [portal_user_id]
+        if portal_username:
+            return "portal_user_id IS NULL AND portal_username = ?", [portal_username]
+        return "portal_user_id IS NULL AND (portal_username IS NULL OR portal_username = '')", []
 
 
 def _utc_now() -> str:

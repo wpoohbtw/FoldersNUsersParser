@@ -12,11 +12,13 @@ from pydantic import BaseModel
 
 from .config import load_settings
 from .db import Database
+from .folder_parser_service import FolderParserService
 from .import_service import ImportService
 
 settings = load_settings()
 db = Database(settings.db_path)
 service = ImportService(settings, db)
+folder_parser = FolderParserService(settings, db)
 
 app = FastAPI(title="FoldersNUsersParser API", version="0.1.0")
 
@@ -38,6 +40,10 @@ class AccountActionRequest(BaseModel):
     account_ids: list[int]
 
 
+class ChannelDeleteRequest(BaseModel):
+    channel_ids: list[int]
+
+
 class PhoneStartRequest(BaseModel):
     phone: str
 
@@ -54,6 +60,11 @@ class PhonePasswordRequest(BaseModel):
 
 class PhoneCancelRequest(BaseModel):
     flow_id: str
+
+
+class FolderListenerRequest(BaseModel):
+    account_id: int
+    folder_id: str
 
 
 @dataclass(slots=True)
@@ -79,12 +90,14 @@ def get_portal_user(
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
     db.init()
+    await folder_parser.restore_running_listeners()
 
 
 @app.on_event("shutdown")
-def on_shutdown() -> None:
+async def on_shutdown() -> None:
+    await folder_parser.stop_all()
     db.close()
 
 
@@ -137,6 +150,141 @@ async def refresh_account_folders(account_id: int, portal_user: PortalUser = Dep
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     return {"items": folders}
+
+
+@app.post("/api/v1/folders/accounts/{account_id}/folders/{folder_id}/sync")
+async def sync_account_folder_channels(account_id: int, folder_id: str, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    account = db.get_account(account_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    if not account:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    try:
+        return await folder_parser.sync_folder_once(
+            account,
+            folder_id,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.get("/api/v1/folders/listener/status")
+def get_folder_listener_status(account_id: int, folder_id: str, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    account = db.get_account(account_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    if not account:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    return folder_parser.get_listener_status(
+        account_id,
+        folder_id,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+
+
+@app.get("/api/v1/folders/listener/active")
+def get_active_folder_listener(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return folder_parser.get_active_listener(
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+
+
+@app.post("/api/v1/folders/listener/start")
+async def start_folder_listener(payload: FolderListenerRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    account = db.get_account(payload.account_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    if not account:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    try:
+        return await folder_parser.start_listener(
+            account,
+            payload.folder_id,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.post("/api/v1/folders/listener/stop")
+async def stop_folder_listener(payload: FolderListenerRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    account = db.get_account(payload.account_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    if not account:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    return await folder_parser.stop_listener(
+        payload.account_id,
+        payload.folder_id,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+
+
+@app.get("/api/v1/folders/channels")
+def list_folder_channels(
+    account_id: int | None = None,
+    folder_id: str = "",
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    if account_id is not None and not db.get_account(account_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username):
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    return {
+        "items": folder_parser.list_channels(
+            account_id=account_id,
+            folder_id=folder_id,
+            include_rejected=False,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    }
+
+
+@app.get("/api/v1/folders/logs")
+def list_folder_logs(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return {"items": folder_parser.list_logs(portal_user_id=portal_user.user_id, portal_username=portal_user.username)}
+
+
+@app.delete("/api/v1/folders/logs")
+def clear_folder_logs(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    folder_parser.clear_logs(portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    return {"ok": True}
+
+
+@app.get("/api/v1/channels")
+def list_channels(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return {
+        "items": folder_parser.list_channels(
+            include_rejected=True,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    }
+
+
+@app.post("/api/v1/channels/{channel_id}/approve")
+def approve_channel(channel_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    folder_parser.approve_channel(channel_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    return {"ok": True}
+
+
+@app.post("/api/v1/channels/{channel_id}/reject")
+def reject_channel(channel_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    folder_parser.reject_channel(channel_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    return {"ok": True}
+
+
+@app.post("/api/v1/channels/{channel_id}/reset")
+def reset_channel(channel_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    folder_parser.reset_channel(channel_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    return {"ok": True}
+
+
+@app.delete("/api/v1/channels")
+def delete_channels(payload: ChannelDeleteRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    deleted = folder_parser.delete_channels(
+        payload.channel_ids,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+    return {"deleted": deleted}
 
 
 @app.post("/api/v1/imports/session/upload")

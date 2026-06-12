@@ -74,6 +74,41 @@ export type ApiFolder = {
   updated_at?: string;
 };
 
+export type ApiFolderChannel = {
+  id: string;
+  channel_id: number;
+  title: string;
+  username: string;
+  url: string;
+  avatar_url: string;
+  subscribers: number;
+  avg_views: number;
+  added_at: string;
+  updated_at: string;
+  check_status: 'checked' | 'unchecked' | 'rejected' | string;
+  source_channels: Array<{
+    id: string;
+    title: string;
+    avatar_url: string;
+  }>;
+};
+
+export type FolderListenerStatus = {
+  status: 'idle' | 'running' | string;
+  listener_id?: number;
+  account_id?: number;
+  folder_id?: string;
+  folder_title?: string;
+  channels: number;
+};
+
+export type FolderLog = {
+  id: string;
+  timestamp: string;
+  type: 'info' | 'success' | 'warn' | 'system' | 'scan' | string;
+  message: string;
+};
+
 export type PortalUser = {
   portal_user_id: string;
   portal_username: string;
@@ -81,14 +116,45 @@ export type PortalUser = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...init?.headers,
-    },
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
   });
+}
+
+function getNetworkErrorMessage(err: unknown) {
+  const message = err instanceof Error ? err.message : '';
+  if (!message || message.toLowerCase().includes('failed to fetch')) {
+    return 'Backend еще запускается или временно недоступен. Повторите через пару секунд.';
+  }
+  return message;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || 'GET').toUpperCase();
+  const attempts = method === 'GET' ? 8 : 1;
+  let response: Response | null = null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers: {
+          ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+          ...init?.headers,
+        },
+      });
+      break;
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts - 1) {
+        await delay(450 + attempt * 650);
+      }
+    }
+  }
+  if (!response) {
+    throw new Error(getNetworkErrorMessage(lastError));
+  }
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     try {
@@ -130,6 +196,72 @@ export const api = {
   async refreshAccountFolders(accountId: number) {
     return request<{ items: ApiFolder[] }>(`/api/v1/folders/accounts/${accountId}/folders/refresh`, {
       method: 'POST',
+    });
+  },
+  async syncAccountFolder(accountId: number, folderId: string) {
+    return request<FolderListenerStatus>(`/api/v1/folders/accounts/${accountId}/folders/${encodeURIComponent(folderId)}/sync`, {
+      method: 'POST',
+    });
+  },
+  async getFolderListenerStatus(accountId: number, folderId: string) {
+    return request<FolderListenerStatus>(`/api/v1/folders/listener/status?account_id=${accountId}&folder_id=${encodeURIComponent(folderId)}`);
+  },
+  async getActiveFolderListener() {
+    return request<FolderListenerStatus>('/api/v1/folders/listener/active');
+  },
+  async startFolderListener(accountId: number, folderId: string) {
+    return request<FolderListenerStatus>('/api/v1/folders/listener/start', {
+      method: 'POST',
+      body: JSON.stringify({ account_id: accountId, folder_id: folderId }),
+    });
+  },
+  async stopFolderListener(accountId: number, folderId: string) {
+    return request<FolderListenerStatus>('/api/v1/folders/listener/stop', {
+      method: 'POST',
+      body: JSON.stringify({ account_id: accountId, folder_id: folderId }),
+    });
+  },
+  async listFolderChannels(accountId?: number, folderId?: string) {
+    const params = new URLSearchParams();
+    if (accountId) {
+      params.set('account_id', String(accountId));
+    }
+    if (folderId) {
+      params.set('folder_id', folderId);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return request<{ items: ApiFolderChannel[] }>(`/api/v1/folders/channels${suffix}`);
+  },
+  async listChannels() {
+    return request<{ items: ApiFolderChannel[] }>('/api/v1/channels');
+  },
+  async approveChannel(channelId: number) {
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/approve`, {
+      method: 'POST',
+    });
+  },
+  async rejectChannel(channelId: number) {
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reject`, {
+      method: 'POST',
+    });
+  },
+  async resetChannel(channelId: number) {
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reset`, {
+      method: 'POST',
+    });
+  },
+  async deleteChannels(channelIds: number[]) {
+    return request<{ deleted: number }>('/api/v1/channels', {
+      method: 'DELETE',
+      body: JSON.stringify({ channel_ids: channelIds }),
+    });
+  },
+  async listFolderLogs() {
+    return request<{ items: FolderLog[] }>('/api/v1/folders/logs');
+  },
+  async clearFolderLogs() {
+    return request<{ ok: boolean }>('/api/v1/folders/logs', {
+      method: 'DELETE',
     });
   },
   async uploadSessions(files: File[]) {

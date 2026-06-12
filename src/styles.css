@@ -212,6 +212,9 @@ button:disabled {
 .ghostButton,
 .iconButton,
 .inlineIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 40px;
   border-radius: 13px;
   border: 1px solid rgba(83, 220, 255, 0.24);
@@ -624,14 +627,84 @@ button:disabled {
   outline: none;
 }
 
+.channelHeaderTools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: min(540px, 100%);
+}
+
+.deleteModeButton {
+  width: auto;
+  min-width: 128px;
+  min-height: 42px;
+  padding: 0 12px;
+  gap: 8px;
+  grid-auto-flow: column;
+  color: #ff8d9b;
+  line-height: 1;
+}
+
+.inlineIconButton.deleteModeButton {
+  display: inline-flex;
+  width: auto;
+  padding: 0 12px;
+}
+
+.deleteModeButton.isActive {
+  border-color: rgba(255, 91, 112, 0.48);
+  background: rgba(255, 79, 100, 0.09);
+  box-shadow: 0 0 22px rgba(255, 79, 100, 0.13);
+}
+
+.deleteModeButton span {
+  display: inline-flex;
+  min-width: 62px;
+  align-items: center;
+  justify-content: flex-start;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.channelHeaderLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 24px;
+  line-height: 24px;
+}
+
+.channelSelectSlot {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
 .animatedTableShell {
   position: relative;
 }
 
 .folderChannelsScroll {
+  height: 616px;
   max-height: 616px;
   overflow: auto;
   padding-bottom: 2px;
+}
+
+.channelsReviewPanel {
+  max-width: 1320px;
+}
+
+.channelsReviewPanel .folderChannelsScroll {
+  height: 760px;
+  max-height: 760px;
+  background: rgba(4, 14, 23, 0.42);
 }
 
 .folderChannelsScroll::-webkit-scrollbar {
@@ -677,6 +750,11 @@ button:disabled {
   position: sticky;
   top: 0;
   z-index: 3;
+  height: 58px;
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: middle;
+  line-height: 1;
   background: linear-gradient(180deg, rgba(4, 16, 27, 0.98), rgba(3, 12, 21, 0.98));
   box-shadow: inset 0 -1px 0 rgba(104, 218, 244, 0.16);
 }
@@ -701,6 +779,37 @@ button:disabled {
 .folderChannelsTable th:nth-child(5),
 .folderChannelsTable td:nth-child(5) {
   width: 17%;
+}
+
+.channelReviewTable {
+  min-width: 1120px;
+}
+
+.channelReviewTable th:nth-child(1),
+.channelReviewTable td:nth-child(1) {
+  width: 28%;
+}
+
+.channelReviewTable th:nth-child(2),
+.channelReviewTable td:nth-child(2),
+.channelReviewTable th:nth-child(3),
+.channelReviewTable td:nth-child(3) {
+  width: 12%;
+}
+
+.channelReviewTable th:nth-child(4),
+.channelReviewTable td:nth-child(4) {
+  width: 18%;
+}
+
+.channelReviewTable th:nth-child(5),
+.channelReviewTable td:nth-child(5) {
+  width: 18%;
+}
+
+.channelReviewTable th:nth-child(6),
+.channelReviewTable td:nth-child(6) {
+  width: 12%;
 }
 
 .folderChannelRow {
@@ -764,6 +873,16 @@ button:disabled {
   border-radius: 10px;
 }
 
+.channelAvatarFallback {
+  display: inline-grid;
+  place-items: center;
+  background: linear-gradient(135deg, rgba(0, 216, 255, 0.26), rgba(31, 236, 173, 0.2));
+  color: #dffbff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
 .metricCell {
   color: #dffbff;
   font-variant-numeric: tabular-nums;
@@ -813,9 +932,11 @@ button:disabled {
   left: 0;
   z-index: 6;
   display: grid;
-  width: min(260px, 100%);
+  width: 260px;
+  min-width: 260px;
   max-height: 152px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid rgba(96, 215, 242, 0.18);
   border-radius: 14px;
   background:
@@ -838,6 +959,7 @@ button:disabled {
 }
 
 .sourceChannelItem {
+  min-width: 0;
   gap: 9px;
   border-bottom: 1px solid rgba(106, 204, 231, 0.08);
   padding: 9px 10px;
@@ -848,12 +970,107 @@ button:disabled {
 }
 
 .sourceChannelItem span {
+  min-width: 0;
   overflow: hidden;
   color: #dffbff;
   font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.channelReviewActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channelReviewActions .inlineIconButton,
+.channelReviewState {
+  width: 34px;
+  min-height: 34px;
+  border-radius: 12px;
+}
+
+.channelReviewActions .inlineIconButton.approve {
+  color: #68ffc7;
+}
+
+.channelReviewActions .inlineIconButton.reject {
+  color: #ff8d9b;
+}
+
+.channelReviewActions .inlineIconButton.reset {
+  color: #7ceeff;
+}
+
+.channelReviewActions .inlineIconButton.approve:hover {
+  border-color: rgba(52, 255, 181, 0.48);
+  box-shadow: 0 0 22px rgba(33, 255, 173, 0.16);
+}
+
+.channelReviewActions .inlineIconButton.reject:hover {
+  border-color: rgba(255, 91, 112, 0.5);
+  box-shadow: 0 0 22px rgba(255, 79, 100, 0.15);
+}
+
+.channelReviewActions .inlineIconButton.reset:hover {
+  border-color: rgba(124, 238, 255, 0.48);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.14);
+}
+
+.channelSelectBox {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(83, 220, 255, 0.3);
+  border-radius: 7px;
+  background: rgba(3, 13, 22, 0.78);
+  color: #68ffc7;
+  line-height: 1;
+  padding: 0;
+  box-shadow: inset 0 0 12px rgba(0, 216, 255, 0.08);
+}
+
+.channelSelectBox svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.channelSelectBox.isSelected {
+  border-color: rgba(52, 255, 181, 0.52);
+  background: rgba(16, 201, 147, 0.16);
+}
+
+.channelSelectBox.headerSelectBox {
+  width: 24px;
+  height: 24px;
+}
+
+.channelSelectBox.headerSelectBox:hover {
+  transform: none;
+}
+
+.channelReviewState {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(83, 220, 255, 0.22);
+  background: rgba(9, 24, 37, 0.72);
+}
+
+.channelReviewState.checked {
+  border-color: rgba(52, 255, 181, 0.34);
+  color: #68ffc7;
+  box-shadow: inset 0 0 16px rgba(33, 255, 173, 0.08);
+}
+
+.channelReviewState.rejected {
+  border-color: rgba(255, 91, 112, 0.34);
+  color: #ff8d9b;
+  box-shadow: inset 0 0 16px rgba(255, 79, 100, 0.08);
 }
 
 .folderLogsPanel {
@@ -899,7 +1116,9 @@ button:disabled {
 
 .folderLogsBody {
   display: grid;
+  height: 480px;
   max-height: 480px;
+  align-content: start;
   overflow: auto;
   padding: 10px 0;
   background:
