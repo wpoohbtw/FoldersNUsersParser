@@ -93,6 +93,26 @@ export type ApiFolderChannel = {
   }>;
 };
 
+export type ApiChannelTable = {
+  id: number;
+  title: string;
+  owner_portal_user_id: string;
+  owner_portal_username: string;
+  access_role: 'owner' | 'editor' | string;
+  is_owner: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiChannelTableAccess = {
+  id: number;
+  table_id: number;
+  portal_user_id: string;
+  portal_username: string;
+  role: 'owner' | 'editor' | string;
+  created_at: string;
+};
+
 export type FolderListenerStatus = {
   status: 'idle' | 'running' | string;
   listener_id?: number;
@@ -106,6 +126,7 @@ export type FolderLog = {
   id: string;
   timestamp: string;
   type: 'info' | 'success' | 'warn' | 'system' | 'scan' | string;
+  event_type: string;
   message: string;
 };
 
@@ -232,28 +253,49 @@ export const api = {
     const suffix = params.toString() ? `?${params.toString()}` : '';
     return request<{ items: ApiFolderChannel[] }>(`/api/v1/folders/channels${suffix}`);
   },
-  async listChannels() {
-    return request<{ items: ApiFolderChannel[] }>('/api/v1/channels');
+  async listChannelTables() {
+    return request<{ items: ApiChannelTable[] }>('/api/v1/channel-tables');
   },
-  async approveChannel(channelId: number) {
-    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/approve`, {
+  async listChannelTableAccess(tableId: number) {
+    return request<{ items: ApiChannelTableAccess[] }>(`/api/v1/channel-tables/${tableId}/access`);
+  },
+  async addChannelTableAccess(tableId: number, username: string) {
+    return request<{ items: ApiChannelTableAccess[] }>(`/api/v1/channel-tables/${tableId}/access`, {
+      method: 'POST',
+      body: JSON.stringify({ username }),
+    });
+  },
+  async removeChannelTableAccess(tableId: number, username: string) {
+    return request<{ items: ApiChannelTableAccess[] }>(`/api/v1/channel-tables/${tableId}/access/${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+    });
+  },
+  async listChannels(tableId?: number) {
+    const suffix = tableId ? `?table_id=${tableId}` : '';
+    return request<{ items: ApiFolderChannel[] }>(`/api/v1/channels${suffix}`);
+  },
+  async approveChannel(channelId: number, tableId?: number) {
+    const suffix = tableId ? `?table_id=${tableId}` : '';
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/approve${suffix}`, {
       method: 'POST',
     });
   },
-  async rejectChannel(channelId: number) {
-    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reject`, {
+  async rejectChannel(channelId: number, tableId?: number) {
+    const suffix = tableId ? `?table_id=${tableId}` : '';
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reject${suffix}`, {
       method: 'POST',
     });
   },
-  async resetChannel(channelId: number) {
-    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reset`, {
+  async resetChannel(channelId: number, tableId?: number) {
+    const suffix = tableId ? `?table_id=${tableId}` : '';
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reset${suffix}`, {
       method: 'POST',
     });
   },
-  async deleteChannels(channelIds: number[]) {
+  async deleteChannels(channelIds: number[], tableId?: number) {
     return request<{ deleted: number }>('/api/v1/channels', {
       method: 'DELETE',
-      body: JSON.stringify({ channel_ids: channelIds }),
+      body: JSON.stringify({ channel_ids: channelIds, table_id: tableId }),
     });
   },
   async listFolderLogs() {

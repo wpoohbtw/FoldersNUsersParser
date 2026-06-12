@@ -179,7 +179,12 @@ class FolderParserService:
             await client.catch_up()
             self._listeners[key] = listener
 
-        self._log(listener, "system", f"Парсер запущен, слушаю {len(listener.active_channel_ids)} каналов")
+        self._log(
+            listener,
+            "system",
+            f"Парсер запущен, слушаю {len(listener.active_channel_ids)} каналов",
+            event_type="parser-started",
+        )
         return self._listener_payload(listener, "running")
 
     async def stop_listener(self, account_id: int, folder_id: str, portal_user_id: str = "", portal_username: str = "") -> dict:
@@ -188,7 +193,7 @@ class FolderParserService:
             listener = self._listeners.pop(key, None)
 
         if listener:
-            self._log(listener, "warn", "Парсер остановлен")
+            self._log(listener, "warn", "Парсер остановлен", event_type="parser-stopped")
             self.db.set_folder_listener_status(
                 listener.account_id,
                 listener.folder_id,
@@ -261,7 +266,11 @@ class FolderParserService:
         include_rejected: bool = True,
         portal_user_id: str = "",
         portal_username: str = "",
+        table_id: int | None = None,
     ) -> list[dict]:
+        table = self.db.get_accessible_channel_table(table_id, portal_user_id, portal_username)
+        if not table:
+            raise PermissionError("Нет доступа к таблице каналов")
         return [
             self._channel_payload(row)
             for row in self.db.list_folder_channels(
@@ -270,6 +279,7 @@ class FolderParserService:
                 include_rejected=include_rejected,
                 portal_user_id=portal_user_id,
                 portal_username=portal_username,
+                table_id=int(table["id"]),
             )
         ]
 
@@ -279,6 +289,7 @@ class FolderParserService:
                 "id": str(row["id"]),
                 "timestamp": row["created_at"],
                 "type": row["log_type"],
+                "event_type": row.get("event_type") or "",
                 "message": row["message"],
             }
             for row in self.db.list_folder_logs(portal_user_id=portal_user_id, portal_username=portal_username)
@@ -287,36 +298,42 @@ class FolderParserService:
     def clear_logs(self, portal_user_id: str = "", portal_username: str = "") -> None:
         self.db.clear_folder_logs(portal_user_id=portal_user_id, portal_username=portal_username)
 
-    def approve_channel(self, channel_id: int, portal_user_id: str = "", portal_username: str = "") -> None:
+    def approve_channel(self, channel_id: int, table_id: int, portal_user_id: str = "", portal_username: str = "") -> None:
+        self._ensure_table_access(table_id, portal_user_id, portal_username)
         self.db.set_folder_channel_review_status(
             channel_id,
             "checked",
-            portal_user_id=portal_user_id,
-            portal_username=portal_username,
+            table_id=table_id,
         )
 
-    def reject_channel(self, channel_id: int, portal_user_id: str = "", portal_username: str = "") -> None:
+    def reject_channel(self, channel_id: int, table_id: int, portal_user_id: str = "", portal_username: str = "") -> None:
+        self._ensure_table_access(table_id, portal_user_id, portal_username)
         self.db.set_folder_channel_review_status(
             channel_id,
             "rejected",
-            portal_user_id=portal_user_id,
-            portal_username=portal_username,
+            table_id=table_id,
         )
 
-    def reset_channel(self, channel_id: int, portal_user_id: str = "", portal_username: str = "") -> None:
+    def reset_channel(self, channel_id: int, table_id: int, portal_user_id: str = "", portal_username: str = "") -> None:
+        self._ensure_table_access(table_id, portal_user_id, portal_username)
         self.db.set_folder_channel_review_status(
             channel_id,
             "unchecked",
-            portal_user_id=portal_user_id,
-            portal_username=portal_username,
+            table_id=table_id,
         )
 
-    def delete_channels(self, channel_ids: list[int], portal_user_id: str = "", portal_username: str = "") -> int:
+    def delete_channels(self, channel_ids: list[int], table_id: int, portal_user_id: str = "", portal_username: str = "") -> int:
+        self._ensure_table_access(table_id, portal_user_id, portal_username)
         return self.db.delete_folder_channels(
             channel_ids,
-            portal_user_id=portal_user_id,
-            portal_username=portal_username,
+            table_id=table_id,
         )
+
+    def _ensure_table_access(self, table_id: int, portal_user_id: str = "", portal_username: str = "") -> dict:
+        table = self.db.get_accessible_channel_table(table_id, portal_user_id, portal_username)
+        if not table:
+            raise PermissionError("Нет доступа к таблице каналов")
+        return table
 
     def _make_message_handler(self, listener: ActiveFolderListener):
         async def handler(event: events.NewMessage.Event) -> None:
@@ -332,7 +349,7 @@ class FolderParserService:
                 return
 
             for slug, link_url in links.items():
-                self._log(listener, "info", f"Поймана папка в канале {source_title}")
+                self._log(listener, "info", f"Поймана папка в канале {source_title}", event_type="folder-found")
                 await self._process_addlist_link(listener, slug, link_url, channel_id, source_title)
 
         return handler
@@ -428,7 +445,7 @@ class FolderParserService:
                     portal_username=listener.portal_username,
                 )
                 if processing_status == "done":
-                    self._log(listener, "success", f"{added} каналов добавлено в таблицу")
+                    self._log(listener, "success", f"{added} каналов добавлено в таблицу", event_type="channels-added")
                 else:
                     self._log(listener, "warn", f"Папка обработана частично: {added} каналов добавлено, повтор разрешен")
             except Exception as err:
@@ -439,7 +456,7 @@ class FolderParserService:
                     portal_user_id=listener.portal_user_id,
                     portal_username=listener.portal_username,
                 )
-                self._log(listener, "warn", f"Ошибка обработки папки: {err}")
+                self._log(listener, "warn", f"Ошибка обработки папки: {err}", event_type="parser-error")
 
     async def _sync_folder_channels(
         self,
@@ -715,13 +732,14 @@ class FolderParserService:
             "channels": len(listener.active_channel_ids),
         }
 
-    def _log(self, listener: ActiveFolderListener, log_type: str, message: str) -> None:
+    def _log(self, listener: ActiveFolderListener, log_type: str, message: str, event_type: str = "") -> None:
         self.db.add_folder_log(
             log_type,
             message,
             listener_id=listener.listener_id,
             portal_user_id=listener.portal_user_id,
             portal_username=listener.portal_username,
+            event_type=event_type,
         )
 
     def _event_channel_id(self, event: events.NewMessage.Event) -> int:

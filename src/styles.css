@@ -627,11 +627,216 @@ button:disabled {
   outline: none;
 }
 
+.toastViewport {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 12;
+  display: grid;
+  width: min(390px, calc(100vw - 36px));
+  gap: 10px;
+  pointer-events: none;
+}
+
+.siteToast {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  overflow: hidden;
+  border: 1px solid rgba(83, 220, 255, 0.2);
+  background:
+    linear-gradient(145deg, rgba(9, 24, 37, 0.96), rgba(3, 12, 21, 0.98)),
+    radial-gradient(circle at 96% 8%, rgba(0, 218, 255, 0.11), transparent 34%);
+  color: #dffbff;
+  pointer-events: auto;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+.siteToast.neon {
+  min-height: 88px;
+  border-radius: 22px;
+  padding: 15px 13px;
+}
+
+.siteToast::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #66ecff;
+}
+
+.siteToast.channels-added::before,
+.siteToast.parser-started::before {
+  background: #4dffc2;
+}
+
+.siteToast.parser-error::before,
+.siteToast.parser-stopped::before {
+  background: #ff8293;
+}
+
+.siteToast.neon::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(102, 236, 255, 0.1), rgba(102, 236, 255, 0.78));
+  animation: toastLifetime 7s linear forwards;
+  transform-origin: left;
+}
+
+.siteToastIcon {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(83, 220, 255, 0.22);
+  border-radius: 14px;
+  background: rgba(0, 216, 255, 0.1);
+  color: #69f7ff;
+}
+
+.siteToast.channels-added .siteToastIcon,
+.siteToast.parser-started .siteToastIcon {
+  color: #54ffc4;
+}
+
+.siteToast.parser-error .siteToastIcon,
+.siteToast.parser-stopped .siteToastIcon {
+  color: #ff8a9a;
+}
+
+.siteToast strong,
+.siteToast p {
+  margin: 0;
+}
+
+.siteToast strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.siteToast p {
+  overflow: hidden;
+  color: #8ea7b8;
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.siteToast button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(83, 220, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(3, 13, 22, 0.46);
+  color: #8ea7b8;
+}
+
+.siteToast button:hover {
+  color: #dffbff;
+}
+
+@keyframes toastLifetime {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
 .channelHeaderTools {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: min(540px, 100%);
+}
+
+.channelTableSelect {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.tableAccessButton {
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  flex: 0 0 42px;
+  border-radius: 999px;
+  color: #6ff4ff;
+}
+
+.channelTableButton,
+.channelTableStatic {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(83, 220, 255, 0.24);
+  border-radius: 13px;
+  padding: 0 12px;
+  background: rgba(9, 24, 37, 0.72);
+  color: #dffbff;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.channelTableButton:hover,
+.channelTableButton:focus-visible {
+  border-color: rgba(100, 238, 255, 0.48);
+  box-shadow: 0 0 26px rgba(0, 216, 255, 0.14);
+  outline: none;
+}
+
+.channelTableMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 10;
+  display: grid;
+  width: 240px;
+  overflow: hidden;
+  border: 1px solid rgba(96, 215, 242, 0.2);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(8, 27, 41, 0.98), rgba(4, 14, 23, 0.99));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+}
+
+.channelTableOption {
+  display: grid;
+  gap: 3px;
+  border: 0;
+  border-bottom: 1px solid rgba(106, 204, 231, 0.08);
+  padding: 11px 12px;
+  background: transparent;
+  color: #dffbff;
+  text-align: left;
+}
+
+.channelTableOption:last-child {
+  border-bottom: 0;
+}
+
+.channelTableOption em {
+  color: #83a0b2;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.channelTableOption.isSelected,
+.channelTableOption:hover {
+  background: rgba(24, 174, 205, 0.18);
 }
 
 .deleteModeButton {
@@ -666,6 +871,131 @@ button:disabled {
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+}
+
+.accessModal {
+  width: min(560px, calc(100vw - 28px));
+}
+
+.accessModal .modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.accessModal .modalHeader h2 {
+  margin: 4px 0 0;
+}
+
+.modalClose {
+  display: inline-flex;
+  width: 42px;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(83, 220, 255, 0.24);
+  border-radius: 14px;
+  background: rgba(9, 24, 37, 0.72);
+  color: #dffbff;
+}
+
+.modalClose:hover {
+  border-color: rgba(100, 238, 255, 0.48);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.14);
+}
+
+.accessModalTableName {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid rgba(83, 220, 255, 0.18);
+  border-radius: 14px;
+  padding: 0 12px;
+  background: rgba(3, 13, 22, 0.42);
+  color: #dffbff;
+  font-weight: 800;
+}
+
+.accessAddRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.accessAddRow input {
+  min-height: 42px;
+  border: 1px solid rgba(83, 220, 255, 0.24);
+  border-radius: 13px;
+  padding: 0 13px;
+  background: rgba(3, 13, 22, 0.74);
+  color: #dffbff;
+  font: inherit;
+  outline: none;
+}
+
+.accessList {
+  display: grid;
+  max-height: 290px;
+  overflow: auto;
+  margin-top: 14px;
+  border: 1px solid rgba(83, 220, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(3, 13, 22, 0.34);
+}
+
+.accessItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(106, 204, 231, 0.08);
+  padding: 10px 12px;
+}
+
+.accessItem:last-child {
+  border-bottom: 0;
+}
+
+.accessAvatar {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(83, 220, 255, 0.24);
+  border-radius: 12px;
+  background: rgba(0, 216, 255, 0.12);
+  color: #72f7ff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.accessItem div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.accessItem strong,
+.accessItem em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accessItem em,
+.accessEmpty {
+  color: #8ea7b8;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.accessEmpty {
+  padding: 18px;
+  text-align: center;
 }
 
 .channelHeaderLabel {
@@ -831,16 +1161,20 @@ button:disabled {
   gap: 12px;
 }
 
-.channelIdentity a {
+.channelIdentity a,
+.channelTitlePlain {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   overflow: hidden;
   color: #effbff;
   font-weight: 650;
-  text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.channelIdentity a {
+  text-decoration: none;
 }
 
 .channelIdentity a svg {

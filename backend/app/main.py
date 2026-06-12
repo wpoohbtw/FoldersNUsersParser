@@ -42,6 +42,11 @@ class AccountActionRequest(BaseModel):
 
 class ChannelDeleteRequest(BaseModel):
     channel_ids: list[int]
+    table_id: int | None = None
+
+
+class ChannelTableAccessRequest(BaseModel):
+    username: str
 
 
 class PhoneStartRequest(BaseModel):
@@ -249,38 +254,90 @@ def clear_folder_logs(portal_user: PortalUser = Depends(get_portal_user)) -> dic
 
 
 @app.get("/api/v1/channels")
-def list_channels(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
-    return {
-        "items": folder_parser.list_channels(
-            include_rejected=True,
-            portal_user_id=portal_user.user_id,
-            portal_username=portal_user.username,
-        )
-    }
+def list_channels(table_id: int | None = None, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    try:
+        return {
+            "items": folder_parser.list_channels(
+                include_rejected=True,
+                portal_user_id=portal_user.user_id,
+                portal_username=portal_user.username,
+                table_id=table_id,
+            )
+        }
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
+
+
+@app.get("/api/v1/channel-tables")
+def list_channel_tables(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return {"items": db.list_channel_tables(portal_user_id=portal_user.user_id, portal_username=portal_user.username)}
+
+
+@app.get("/api/v1/channel-tables/{table_id}/access")
+def list_channel_table_access(table_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    return {"items": db.list_channel_table_access(table_id, portal_user.user_id, portal_user.username)}
+
+
+@app.post("/api/v1/channel-tables/{table_id}/access")
+def add_channel_table_access(table_id: int, payload: ChannelTableAccessRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    try:
+        db.add_channel_table_access(table_id, payload.username, portal_user.user_id, portal_user.username)
+        return {"items": db.list_channel_table_access(table_id, portal_user.user_id, portal_user.username)}
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.delete("/api/v1/channel-tables/{table_id}/access/{username}")
+def remove_channel_table_access(table_id: int, username: str, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    try:
+        db.remove_channel_table_access(table_id, username, portal_user.user_id, portal_user.username)
+        return {"items": db.list_channel_table_access(table_id, portal_user.user_id, portal_user.username)}
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @app.post("/api/v1/channels/{channel_id}/approve")
-def approve_channel(channel_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
-    folder_parser.approve_channel(channel_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+def approve_channel(channel_id: int, table_id: int | None = None, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    folder_parser.approve_channel(channel_id, int(table["id"]), portal_user_id=portal_user.user_id, portal_username=portal_user.username)
     return {"ok": True}
 
 
 @app.post("/api/v1/channels/{channel_id}/reject")
-def reject_channel(channel_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
-    folder_parser.reject_channel(channel_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+def reject_channel(channel_id: int, table_id: int | None = None, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    folder_parser.reject_channel(channel_id, int(table["id"]), portal_user_id=portal_user.user_id, portal_username=portal_user.username)
     return {"ok": True}
 
 
 @app.post("/api/v1/channels/{channel_id}/reset")
-def reset_channel(channel_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
-    folder_parser.reset_channel(channel_id, portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+def reset_channel(channel_id: int, table_id: int | None = None, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    folder_parser.reset_channel(channel_id, int(table["id"]), portal_user_id=portal_user.user_id, portal_username=portal_user.username)
     return {"ok": True}
 
 
 @app.delete("/api/v1/channels")
 def delete_channels(payload: ChannelDeleteRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    table = db.get_accessible_channel_table(payload.table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
     deleted = folder_parser.delete_channels(
         payload.channel_ids,
+        int(table["id"]),
         portal_user_id=portal_user.user_id,
         portal_username=portal_user.username,
     )

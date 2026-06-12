@@ -10,6 +10,7 @@ import {
   FolderOpen,
   HardDriveUpload,
   Hash,
+  Link2,
   Loader2,
   LockKeyhole,
   MessageCircle,
@@ -24,6 +25,7 @@ import {
   Trash2,
   UploadCloud,
   UserRoundCog,
+  Users,
   X,
 } from 'lucide-react';
 import {
@@ -31,6 +33,8 @@ import {
   type AccountRole,
   type AccountStatus,
   type ApiAccount,
+  type ApiChannelTable,
+  type ApiChannelTableAccess,
   type ApiFolder,
   type ApiFolderChannel,
   type FolderLog,
@@ -64,8 +68,25 @@ const roleClassNames: Record<AccountRole, string> = {
 type AppPage = 'accounts' | 'chat' | 'folder' | 'channels';
 type ListenerStatus = 'idle' | 'running';
 type ChannelReviewFilter = 'all' | 'checked' | 'unchecked' | 'rejected';
+type NotificationKind = 'folder-found' | 'channels-added' | 'parser-error' | 'parser-started' | 'parser-stopped';
+
+type SiteToast = {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  message: string;
+  timestamp: string;
+};
 
 const APP_PAGE_STORAGE_KEY = 'fnup.activePage';
+const NOTIFICATION_EVENTS = new Set<NotificationKind>(['folder-found', 'channels-added', 'parser-error', 'parser-started', 'parser-stopped']);
+const NOTIFICATION_TITLES: Record<NotificationKind, string> = {
+  'folder-found': 'Папка обнаружена',
+  'channels-added': 'Каналы добавлены',
+  'parser-error': 'Ошибка обработки папки',
+  'parser-started': 'Парсер запущен',
+  'parser-stopped': 'Парсер остановлен',
+};
 
 function getPortalStorageUser(currentUser: PortalUser | null, accounts: ApiAccount[] = []) {
   if (currentUser?.portal_user_id) {
@@ -702,6 +723,16 @@ const folderUi = {
   deleteSelected: '\u0423\u0434\u0430\u043b\u0438\u0442\u044c',
   chooseChannels: '\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435',
   selectedFolderMissing: '\u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f \u043f\u0430\u043f\u043a\u0430 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442 \u043d\u0430 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0435. \u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0430\u043f\u043e\u043a \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.',
+  myTable: '\u041c\u043e\u044f \u0442\u0430\u0431\u043b\u0438\u0446\u0430',
+  tableAccess: '\u0414\u043e\u0441\u0442\u0443\u043f \u043a \u0442\u0430\u0431\u043b\u0438\u0446\u0435',
+  addUser: '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c',
+  usernamePlaceholder: 'username',
+  owner: '\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446',
+  editor: '\u0420\u0435\u0434\u0430\u043a\u0442\u043e\u0440',
+  tableAccessLoadFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0434\u043e\u0441\u0442\u0443\u043f\u044b',
+  tableAccessUpdateFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u0434\u043e\u0441\u0442\u0443\u043f',
+  noSharedUsers: '\u0414\u043e\u0441\u0442\u0443\u043f\u043e\u0432 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442',
+  selectTable: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0442\u0430\u0431\u043b\u0438\u0446\u0443',
 };
 
 function getChannelInitials(title: string) {
@@ -722,12 +753,76 @@ function ChannelAvatar({ src, title, size = 'normal' }: { src: string; title: st
   return <img className={`channelAvatar ${size}`} src={avatarUrl} alt="" loading="lazy" title={title} />;
 }
 
+function ChannelTitleLink({ channel }: { channel: ApiFolderChannel }) {
+  const url = channel.url.trim();
+  if (!url) {
+    return <span className="channelTitlePlain">{channel.title}</span>;
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer">
+      {channel.title}
+      <ExternalLink size={14} aria-hidden="true" />
+    </a>
+  );
+}
+
 function channelMatchesSearch(channel: ApiFolderChannel, normalizedSearch: string) {
   return (
     !normalizedSearch ||
     channel.title.toLowerCase().includes(normalizedSearch) ||
     channel.url.toLowerCase().includes(normalizedSearch) ||
     channel.username.toLowerCase().includes(normalizedSearch)
+  );
+}
+
+function getToastIcon(kind: NotificationKind) {
+  if (kind === 'folder-found') return <FolderOpen size={17} />;
+  if (kind === 'channels-added') return <CheckCircle2 size={17} />;
+  if (kind === 'parser-error') return <X size={17} />;
+  if (kind === 'parser-started') return <Play size={17} />;
+  return <Square size={16} />;
+}
+
+function getNotificationFromLog(log: FolderLog): SiteToast | null {
+  const kind = log.event_type as NotificationKind;
+  if (!NOTIFICATION_EVENTS.has(kind)) {
+    return null;
+  }
+
+  return {
+    id: `log_${log.id}`,
+    kind,
+    title: NOTIFICATION_TITLES[kind],
+    message: log.message,
+    timestamp: log.timestamp,
+  };
+}
+
+function NotificationLayer({ toasts, onClose }: { toasts: SiteToast[]; onClose: (id: string) => void }) {
+  return (
+    <div className="toastViewport neon" aria-live="polite" aria-atomic="false">
+      <AnimatePresence initial={false}>
+        {toasts.map((toast) => (
+          <motion.article
+            className={`siteToast neon ${toast.kind}`}
+            initial={{ opacity: 0, x: 22, scale: 0.97 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 18, scale: 0.97 }}
+            transition={{ duration: 0.18 }}
+            key={toast.id}
+          >
+            <span className="siteToastIcon">{getToastIcon(toast.kind)}</span>
+            <div>
+              <strong>{toast.title}</strong>
+              <p>{toast.message}</p>
+            </div>
+            <button type="button" onClick={() => onClose(toast.id)} aria-label="Close">
+              <X size={14} />
+            </button>
+          </motion.article>
+        ))}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -775,10 +870,7 @@ function FolderChannelsTable({ channels, isLoading }: { channels: ApiFolderChann
                       <td>
                         <div className="channelIdentity">
                           <ChannelAvatar src={channel.avatar_url} title={channel.title} />
-                          <a href={channel.url} target="_blank" rel="noreferrer">
-                            {channel.title}
-                            <ExternalLink size={14} aria-hidden="true" />
-                          </a>
+                          <ChannelTitleLink channel={channel} />
                         </div>
                       </td>
                       <td className="metricCell">{formatMetric(channel.subscribers)}</td>
@@ -827,8 +919,124 @@ function FolderChannelsTable({ channels, isLoading }: { channels: ApiFolderChann
   );
 }
 
+function ChannelAccessModal({
+  table,
+  onClose,
+}: {
+  table: ApiChannelTable;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<ApiChannelTableAccess[]>([]);
+  const [username, setUsername] = useState('');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function loadAccess() {
+    setError('');
+    setIsLoading(true);
+    try {
+      const payload = await api.listChannelTableAccess(table.id);
+      setItems(payload.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : folderUi.tableAccessLoadFailed);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAccess();
+  }, [table.id]);
+
+  async function addAccess() {
+    const value = username.trim().replace(/^@/, '');
+    if (!value) return;
+    setIsSaving(true);
+    setError('');
+    try {
+      const payload = await api.addChannelTableAccess(table.id, value);
+      setItems(payload.items);
+      setUsername('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : folderUi.tableAccessUpdateFailed);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function removeAccess(item: ApiChannelTableAccess) {
+    const value = item.portal_username || item.portal_user_id;
+    if (!value || item.role === 'owner') return;
+    setIsSaving(true);
+    setError('');
+    try {
+      const payload = await api.removeChannelTableAccess(table.id, value);
+      setItems(payload.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : folderUi.tableAccessUpdateFailed);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="modalBackdrop" role="presentation" onMouseDown={onClose}>
+      <section className="importModal accessModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modalHeader">
+          <div>
+            <span>{folderUi.channels}</span>
+            <h2>{folderUi.tableAccess}</h2>
+          </div>
+          <button className="modalClose" type="button" onClick={onClose} aria-label="Close">
+            <X size={20} />
+          </button>
+        </header>
+        <div className="accessModalTableName">
+          <Users size={18} />
+          <span>{table.is_owner ? folderUi.myTable : table.title}</span>
+        </div>
+        <div className="accessAddRow">
+          <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder={folderUi.usernamePlaceholder} />
+          <button className="primaryButton" type="button" onClick={() => void addAccess()} disabled={isSaving || !username.trim() || !table.is_owner}>
+            {isSaving ? <Loader2 className="spinIcon" size={16} /> : <Link2 size={16} />}
+            {folderUi.addUser}
+          </button>
+        </div>
+        {error && <div className="folderInlineError">{error}</div>}
+        <div className="accessList">
+          {isLoading ? (
+            <div className="accessEmpty">{folderUi.loadingChannels}</div>
+          ) : items.length ? (
+            items.map((item) => (
+              <div className="accessItem" key={`${item.table_id}_${item.portal_user_id}_${item.portal_username}`}>
+                <span className="accessAvatar">{(item.portal_username || item.portal_user_id || '?').slice(0, 2).toUpperCase()}</span>
+                <div>
+                  <strong>{item.portal_username ? `@${item.portal_username}` : item.portal_user_id}</strong>
+                  <em>{item.role === 'owner' ? folderUi.owner : folderUi.editor}</em>
+                </div>
+                {table.is_owner && item.role !== 'owner' && (
+                  <button className="inlineIconButton reject" type="button" onClick={() => void removeAccess(item)} disabled={isSaving} aria-label="Remove">
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="accessEmpty">{folderUi.noSharedUsers}</div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ChannelsPage() {
   const [channels, setChannels] = useState<ApiFolderChannel[]>([]);
+  const [channelTables, setChannelTables] = useState<ApiChannelTable[]>([]);
+  const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
+  const [isTableMenuOpen, setIsTableMenuOpen] = useState(false);
+  const [isAccessModalOpen, setIsAccessModalOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<ChannelReviewFilter>('all');
   const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState('');
@@ -836,12 +1044,30 @@ function ChannelsPage() {
   const [channelsError, setChannelsError] = useState('');
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
+  const selectedTable = channelTables.find((table) => table.id === selectedTableId) || channelTables[0] || null;
 
-  async function loadChannels() {
+  async function loadChannelTables() {
+    const payload = await api.listChannelTables();
+    setChannelTables(payload.items);
+    setSelectedTableId((current) => {
+      if (current && payload.items.some((table) => table.id === current)) {
+        return current;
+      }
+      return payload.items[0]?.id || null;
+    });
+    return payload.items;
+  }
+
+  async function loadChannels(tableId = selectedTableId) {
+    if (!tableId) {
+      setChannels([]);
+      setIsLoadingChannels(false);
+      return;
+    }
     setChannelsError('');
     setIsLoadingChannels(true);
     try {
-      const payload = await api.listChannels();
+      const payload = await api.listChannels(tableId);
       setChannels(payload.items);
     } catch (err) {
       setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
@@ -851,8 +1077,24 @@ function ChannelsPage() {
   }
 
   useEffect(() => {
-    void loadChannels();
+    loadChannelTables()
+      .then((items) => {
+        const tableId = items[0]?.id || null;
+        if (tableId) void loadChannels(tableId);
+      })
+      .catch((err: unknown) => {
+        setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
+        setIsLoadingChannels(false);
+      });
   }, []);
+
+  useEffect(() => {
+    if (selectedTableId) {
+      setSelectedChannelIds([]);
+      setDeleteMode(false);
+      void loadChannels(selectedTableId);
+    }
+  }, [selectedTableId]);
 
   const counts = useMemo(
     () => ({
@@ -890,23 +1132,23 @@ function ChannelsPage() {
   }
 
   async function approveChannel(channelId: number) {
-    await api.approveChannel(channelId);
+    await api.approveChannel(channelId, selectedTableId || undefined);
     setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'checked' } : channel)));
   }
 
   async function rejectChannel(channelId: number) {
-    await api.rejectChannel(channelId);
+    await api.rejectChannel(channelId, selectedTableId || undefined);
     setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'rejected' } : channel)));
   }
 
   async function resetChannel(channelId: number) {
-    await api.resetChannel(channelId);
+    await api.resetChannel(channelId, selectedTableId || undefined);
     setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'unchecked' } : channel)));
   }
 
   async function toggleDeleteMode() {
     if (deleteMode && selectedChannelIds.length) {
-      await api.deleteChannels(selectedChannelIds);
+      await api.deleteChannels(selectedChannelIds, selectedTableId || undefined);
       setChannels((items) => items.filter((channel) => !selectedChannelIds.includes(channel.channel_id)));
       setSelectedChannelIds([]);
       setDeleteMode(false);
@@ -930,6 +1172,42 @@ function ChannelsPage() {
         <header className="panelHeader folderChannelsHeader">
           <div><h2>{folderUi.channels}</h2></div>
           <div className="channelHeaderTools">
+            {selectedTable && (
+              <div className={`channelTableSelect${isTableMenuOpen ? ' isOpen' : ''}`}>
+                {channelTables.length > 1 ? (
+                  <>
+                    <button className="channelTableButton" type="button" onClick={() => setIsTableMenuOpen((value) => !value)} aria-label={folderUi.selectTable}>
+                      <Users size={16} />
+                      <span>{selectedTable.is_owner ? folderUi.myTable : selectedTable.title}</span>
+                      <ChevronDown size={15} />
+                    </button>
+                    {isTableMenuOpen && (
+                      <div className="channelTableMenu">
+                        {channelTables.map((table) => (
+                          <button
+                            className={`channelTableOption${table.id === selectedTable.id ? ' isSelected' : ''}`}
+                            type="button"
+                            onClick={() => {
+                              setSelectedTableId(table.id);
+                              setIsTableMenuOpen(false);
+                            }}
+                            key={table.id}
+                          >
+                            <strong>{table.is_owner ? folderUi.myTable : table.title}</strong>
+                            <em>@{table.owner_portal_username || table.owner_portal_user_id || 'owner'}</em>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <span className="channelTableStatic"><Users size={16} />{folderUi.myTable}</span>
+                )}
+              </div>
+            )}
+            <button className="inlineIconButton tableAccessButton" type="button" onClick={() => setIsAccessModalOpen(true)} disabled={!selectedTable} title={folderUi.tableAccess} aria-label={folderUi.tableAccess}>
+              <Link2 size={16} />
+            </button>
             <label className="channelSearch"><Search size={16} /><input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder={folderUi.search} /></label>
             <button className={`inlineIconButton deleteModeButton${deleteMode ? ' isActive' : ''}`} type="button" onClick={() => void toggleDeleteMode()} title={folderUi.deleteChannels} aria-label={folderUi.deleteChannels}>
               <Trash2 size={16} />
@@ -964,7 +1242,7 @@ function ChannelsPage() {
                             )}
                           </span>
                           <ChannelAvatar src={channel.avatar_url} title={channel.title} />
-                          <a href={channel.url} target="_blank" rel="noreferrer">{channel.title}<ExternalLink size={14} aria-hidden="true" /></a>
+                          <ChannelTitleLink channel={channel} />
                         </div>
                       </td>
                       <td className="metricCell">{formatMetric(channel.subscribers)}</td>
@@ -989,6 +1267,7 @@ function ChannelsPage() {
           <div className="animatedTableGradient bottom" />
         </div>
       </section>
+      {isAccessModalOpen && selectedTable && <ChannelAccessModal table={selectedTable} onClose={() => setIsAccessModalOpen(false)} />}
     </>
   );
 }
@@ -1158,6 +1437,74 @@ export function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [checkingId, setCheckingId] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [toasts, setToasts] = useState<SiteToast[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const pendingToastsRef = useRef<SiteToast[]>([]);
+  const toastTimersRef = useRef<number[]>([]);
+  const seenNotificationLogIdsRef = useRef<Set<string>>(new Set());
+  const notificationSeededRef = useRef(false);
+  const originalTitleRef = useRef('');
+
+  function getAudioContext() {
+    if (typeof window === 'undefined') return null;
+    if (!audioContextRef.current) {
+      const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtor) return null;
+      audioContextRef.current = new AudioCtor();
+    }
+    return audioContextRef.current;
+  }
+
+  function playNotificationSound(kind: NotificationKind) {
+    const context = getAudioContext();
+    if (!context) return;
+    if (context.state === 'suspended') void context.resume();
+
+    const baseFrequencies: Record<NotificationKind, number> = {
+      'folder-found': 620,
+      'channels-added': 760,
+      'parser-error': 210,
+      'parser-started': 520,
+      'parser-stopped': 340,
+    };
+    const now = context.currentTime;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(kind === 'parser-error' ? 0.09 : 0.055, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+    gain.connect(context.destination);
+
+    [baseFrequencies[kind], baseFrequencies[kind] * 1.5].forEach((frequency, index) => {
+      const oscillator = context.createOscillator();
+      oscillator.type = 'triangle';
+      oscillator.frequency.setValueAtTime(frequency, now + index * 0.035);
+      oscillator.frequency.exponentialRampToValueAtTime(frequency * (kind === 'parser-error' ? 0.72 : 1.18), now + 0.18 + index * 0.035);
+      oscillator.connect(gain);
+      oscillator.start(now + index * 0.035);
+      oscillator.stop(now + 0.42);
+    });
+  }
+
+  function removeToast(id: string) {
+    setToasts((items) => items.filter((toast) => toast.id !== id));
+  }
+
+  function showToast(toast: SiteToast) {
+    setToasts((items) => [toast, ...items].slice(0, 4));
+    const timer = window.setTimeout(() => removeToast(toast.id), 7000);
+    toastTimersRef.current.push(timer);
+  }
+
+  function pushNotification(toast: SiteToast) {
+    playNotificationSound(toast.kind);
+    if (document.hidden) {
+      pendingToastsRef.current = [toast, ...pendingToastsRef.current].slice(0, 8);
+      const baseTitle = originalTitleRef.current || document.title.replace(/^\(\d+\)\s+/, '');
+      document.title = `(${pendingToastsRef.current.length}) ${baseTitle}`;
+      return;
+    }
+    showToast(toast);
+  }
 
   async function loadAccounts() {
     setError('');
@@ -1175,6 +1522,60 @@ export function App() {
   useEffect(() => {
     void loadAccounts();
   }, []);
+
+  useEffect(() => {
+    originalTitleRef.current = document.title;
+    function handleVisibilityChange() {
+      if (document.hidden) return;
+      document.title = originalTitleRef.current || document.title.replace(/^\(\d+\)\s+/, '');
+      const pending = pendingToastsRef.current.splice(0);
+      pending.reverse().forEach((toast) => showToast(toast));
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      toastTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      if (originalTitleRef.current) document.title = originalTitleRef.current;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!portalUser) {
+      return undefined;
+    }
+
+    let isCancelled = false;
+    seenNotificationLogIdsRef.current = new Set();
+    notificationSeededRef.current = false;
+
+    async function loadNotificationLogs() {
+      try {
+        const payload = await api.listFolderLogs();
+        if (isCancelled) return;
+        const eventToasts = payload.items.map(getNotificationFromLog).filter((toast): toast is SiteToast => Boolean(toast));
+        const seen = seenNotificationLogIdsRef.current;
+        if (!notificationSeededRef.current) {
+          eventToasts.forEach((toast) => seen.add(toast.id));
+          notificationSeededRef.current = true;
+          return;
+        }
+        eventToasts.forEach((toast) => {
+          if (seen.has(toast.id)) return;
+          seen.add(toast.id);
+          pushNotification(toast);
+        });
+      } catch {
+        // Notification polling should stay quiet; page-level errors are handled by each feature.
+      }
+    }
+
+    void loadNotificationLogs();
+    const interval = window.setInterval(loadNotificationLogs, 3500);
+    return () => {
+      isCancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [portalUser]);
 
   useEffect(() => {
     if (activePageKeyRef.current !== activePageStorageKey) {
@@ -1305,6 +1706,7 @@ export function App() {
           </section>
         )}
       </section>
+      <NotificationLayer toasts={toasts} onClose={removeToast} />
       {isModalOpen && <ImportModal onClose={() => setIsModalOpen(false)} onAccountsChanged={loadAccounts} />}
     </main>
   );
