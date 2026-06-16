@@ -195,6 +195,24 @@ class Database:
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS telegram_bot_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                portal_user_id TEXT,
+                portal_username TEXT,
+                bot_token TEXT,
+                allowed_username TEXT,
+                is_running INTEGER NOT NULL DEFAULT 0,
+                chat_id INTEGER,
+                main_message_id INTEGER,
+                selected_table_id INTEGER,
+                selected_index INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS import_items (
                 id TEXT PRIMARY KEY,
                 job_id TEXT NOT NULL,
@@ -240,6 +258,13 @@ class Database:
             ("folder_channels", "review_status", "TEXT NOT NULL DEFAULT 'unchecked'"),
             ("folder_parser_logs", "event_type", "TEXT"),
             ("processed_folder_links", "status", "TEXT NOT NULL DEFAULT 'processing'"),
+            ("telegram_bot_configs", "bot_token", "TEXT"),
+            ("telegram_bot_configs", "allowed_username", "TEXT"),
+            ("telegram_bot_configs", "is_running", "INTEGER NOT NULL DEFAULT 0"),
+            ("telegram_bot_configs", "chat_id", "INTEGER"),
+            ("telegram_bot_configs", "main_message_id", "INTEGER"),
+            ("telegram_bot_configs", "selected_table_id", "INTEGER"),
+            ("telegram_bot_configs", "selected_index", "INTEGER NOT NULL DEFAULT 0"),
         ):
             self._ensure_column(table, column, definition)
         cur.execute(
@@ -305,6 +330,15 @@ class Database:
                 COALESCE(portal_user_id, ''),
                 COALESCE(portal_username, ''),
                 addlist_slug
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_bot_configs_owner
+            ON telegram_bot_configs(
+                COALESCE(portal_user_id, ''),
+                COALESCE(portal_username, '')
             )
             """
         )
@@ -1385,6 +1419,169 @@ class Database:
         self.conn.commit()
         return int(cur.rowcount or 0)
 
+    def get_telegram_bot_config(self, portal_user_id: str = "", portal_username: str = "") -> dict:
+        where, args = self._owner_where(portal_user_id, portal_username, table="telegram_bot_configs")
+        row = self.conn.execute(
+            f"""
+            SELECT *
+            FROM telegram_bot_configs
+            WHERE {where}
+            LIMIT 1
+            """,
+            tuple(args),
+        ).fetchone()
+        if row:
+            return self._telegram_bot_config_payload(dict(row))
+
+        now = _utc_now()
+        cur = self.conn.execute(
+            """
+            INSERT INTO telegram_bot_configs(
+                portal_user_id, portal_username, bot_token, allowed_username, is_running,
+                selected_index, created_at, updated_at
+            )
+            VALUES(?, ?, '', '', 0, 0, ?, ?)
+            """,
+            (portal_user_id or None, portal_username or None, now, now),
+        )
+        self.conn.commit()
+        row = self.conn.execute("SELECT * FROM telegram_bot_configs WHERE id = ?", (int(cur.lastrowid),)).fetchone()
+        return self._telegram_bot_config_payload(dict(row))
+
+    def upsert_telegram_bot_config(
+        self,
+        bot_token: str,
+        allowed_username: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        current = self.get_telegram_bot_config(portal_user_id, portal_username)
+        now = _utc_now()
+        self.conn.execute(
+            """
+            UPDATE telegram_bot_configs
+            SET bot_token = ?,
+                allowed_username = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (bot_token.strip(), allowed_username.strip().lstrip("@"), now, int(current["id"])),
+        )
+        self.conn.commit()
+        return self.get_telegram_bot_config(portal_user_id, portal_username)
+
+    def set_telegram_bot_running(
+        self,
+        is_running: bool,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        current = self.get_telegram_bot_config(portal_user_id, portal_username)
+        self.conn.execute(
+            """
+            UPDATE telegram_bot_configs
+            SET is_running = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (1 if is_running else 0, _utc_now(), int(current["id"])),
+        )
+        self.conn.commit()
+        return self.get_telegram_bot_config(portal_user_id, portal_username)
+
+    def update_telegram_bot_main_message(
+        self,
+        chat_id: int,
+        main_message_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        current = self.get_telegram_bot_config(portal_user_id, portal_username)
+        self.conn.execute(
+            """
+            UPDATE telegram_bot_configs
+            SET chat_id = ?,
+                main_message_id = ?,
+                selected_table_id = NULL,
+                selected_index = 0,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (int(chat_id), int(main_message_id), _utc_now(), int(current["id"])),
+        )
+        self.conn.commit()
+        return self.get_telegram_bot_config(portal_user_id, portal_username)
+
+    def update_telegram_bot_ui_state(
+        self,
+        selected_table_id: int | None,
+        selected_index: int = 0,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        current = self.get_telegram_bot_config(portal_user_id, portal_username)
+        self.conn.execute(
+            """
+            UPDATE telegram_bot_configs
+            SET selected_table_id = ?,
+                selected_index = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (int(selected_table_id) if selected_table_id is not None else None, max(0, int(selected_index)), _utc_now(), int(current["id"])),
+        )
+        self.conn.commit()
+        return self.get_telegram_bot_config(portal_user_id, portal_username)
+
+    def list_running_telegram_bot_configs(self) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM telegram_bot_configs
+            WHERE is_running = 1
+              AND COALESCE(bot_token, '') != ''
+              AND COALESCE(allowed_username, '') != ''
+            ORDER BY id ASC
+            """
+        ).fetchall()
+        return [self._telegram_bot_config_payload(dict(row)) for row in rows]
+
+    def list_channel_tables_with_unchecked_counts(self, portal_user_id: str = "", portal_username: str = "") -> list[dict]:
+        tables = self.list_channel_tables(portal_user_id, portal_username)
+        out: list[dict] = []
+        for table in tables:
+            row = self.conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM folder_channels
+                WHERE table_id = ?
+                  AND review_status = 'unchecked'
+                """,
+                (int(table["id"]),),
+            ).fetchone()
+            count = int(row["count"] if row else 0)
+            if count > 0:
+                item = dict(table)
+                item["unchecked_count"] = count
+                out.append(item)
+        return out
+
+    def list_unchecked_channels_for_table(self, table_id: int, portal_user_id: str = "", portal_username: str = "") -> list[dict]:
+        table = self.get_accessible_channel_table(int(table_id), portal_user_id, portal_username)
+        if not table:
+            return []
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM folder_channels
+            WHERE table_id = ?
+              AND review_status = 'unchecked'
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (int(table_id),),
+        ).fetchall()
+        return [self._folder_channel_row_to_dict(row) for row in rows]
+
     def _folder_channel_row_to_dict(self, row: sqlite3.Row) -> dict:
         item = dict(row)
         try:
@@ -1406,12 +1603,29 @@ class Database:
             }
         return list(merged.values())
 
-    def _owner_where(self, portal_user_id: str = "", portal_username: str = "") -> tuple[str, list[Any]]:
+    def _telegram_bot_config_payload(self, row: dict) -> dict:
+        return {
+            "id": int(row["id"]),
+            "portal_user_id": row.get("portal_user_id") or "",
+            "portal_username": row.get("portal_username") or "",
+            "bot_token": row.get("bot_token") or "",
+            "allowed_username": row.get("allowed_username") or "",
+            "is_running": bool(row.get("is_running")),
+            "chat_id": int(row["chat_id"]) if row.get("chat_id") is not None else None,
+            "main_message_id": int(row["main_message_id"]) if row.get("main_message_id") is not None else None,
+            "selected_table_id": int(row["selected_table_id"]) if row.get("selected_table_id") is not None else None,
+            "selected_index": int(row.get("selected_index") or 0),
+            "created_at": row.get("created_at") or "",
+            "updated_at": row.get("updated_at") or "",
+        }
+
+    def _owner_where(self, portal_user_id: str = "", portal_username: str = "", table: str = "") -> tuple[str, list[Any]]:
+        prefix = f"{table}." if table else ""
         if portal_user_id:
-            return "portal_user_id = ?", [portal_user_id]
+            return f"{prefix}portal_user_id = ?", [portal_user_id]
         if portal_username:
-            return "portal_user_id IS NULL AND portal_username = ?", [portal_username]
-        return "portal_user_id IS NULL AND (portal_username IS NULL OR portal_username = '')", []
+            return f"{prefix}portal_user_id IS NULL AND {prefix}portal_username = ?", [portal_username]
+        return f"{prefix}portal_user_id IS NULL AND ({prefix}portal_username IS NULL OR {prefix}portal_username = '')", []
 
 
 def _utc_now() -> str:

@@ -287,6 +287,7 @@ button:disabled {
 .folderChannelsPanel,
 .folderLogsPanel,
 .folderSnapshot,
+.telegramPanel,
 .placeholderPanel,
 .importModal {
   border: 1px solid rgba(96, 215, 242, 0.17);
@@ -562,6 +563,152 @@ button:disabled {
   box-shadow: 0 0 16px rgba(33, 255, 173, 0.72);
 }
 
+.telegramPanel {
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  max-width: 1180px;
+  border-radius: 22px;
+}
+
+.telegramPanelHeader {
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.telegramKicker {
+  display: block;
+  margin-bottom: 6px;
+  color: #67edff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.telegramPanelHeader h2 {
+  margin: 0;
+}
+
+.telegramPanelHeader p {
+  max-width: 560px;
+  margin: 6px 0 0;
+  color: #7e98aa;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.telegramRunDot {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.telegramForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  padding: 20px 22px 22px;
+}
+
+.telegramFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.telegramField {
+  display: grid;
+  gap: 8px;
+}
+
+.telegramField span {
+  color: #7fdff0;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.telegramField input {
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+  border: 1px solid rgba(92, 198, 223, 0.22);
+  border-radius: 14px;
+  padding: 0 14px;
+  background: rgba(3, 13, 22, 0.72);
+  color: #e5f8ff;
+  outline: none;
+}
+
+.telegramField input:focus,
+.telegramField input:hover {
+  border-color: rgba(100, 238, 255, 0.48);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.12);
+}
+
+.telegramField input::placeholder {
+  color: #607b8f;
+}
+
+.telegramActions {
+  display: flex;
+  gap: 8px;
+}
+
+.telegramActionButton {
+  width: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 14px;
+  color: #69f7ff;
+}
+
+.telegramActionButton.primary {
+  border-color: rgba(19, 255, 196, 0.34);
+  background: linear-gradient(135deg, rgba(0, 177, 255, 0.92), rgba(19, 255, 196, 0.72));
+  color: #021018;
+}
+
+.telegramFeatureGrid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.telegramFeatureGrid article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(83, 220, 255, 0.16);
+  border-radius: 16px;
+  padding: 13px 14px;
+  background: rgba(5, 18, 29, 0.58);
+}
+
+.telegramFeatureGrid svg {
+  flex: 0 0 auto;
+  color: #6ff4ff;
+}
+
+.telegramFeatureGrid strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #e5f8ff;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.telegramFeatureGrid span {
+  display: block;
+  color: #83a0b2;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .folderSnapshotGrid {
   display: grid;
   grid-template-columns: minmax(280px, 1.4fr) minmax(220px, 0.8fr) minmax(180px, 0.6fr);
@@ -610,6 +757,7 @@ button:disabled {
 
 .channelFilterBar {
   display: flex;
+  align-items: center;
   gap: 9px;
   flex-wrap: wrap;
   padding: 14px 22px;
@@ -639,6 +787,38 @@ button:disabled {
   color: #e9fbff;
   box-shadow: 0 0 22px rgba(0, 212, 255, 0.13);
   outline: none;
+}
+
+.channelFilterActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.filterActionButton {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 12px;
+}
+
+.filterActionButton.copy {
+  color: #6ff4ff;
+}
+
+.filterActionButton.delete {
+  color: #ff8d9b;
+}
+
+.filterActionButton.copy:hover {
+  border-color: rgba(100, 238, 255, 0.48);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.13);
+}
+
+.filterActionButton.delete:hover {
+  border-color: rgba(255, 91, 112, 0.5);
+  box-shadow: 0 0 22px rgba(255, 79, 100, 0.15);
 }
 
 .toastViewport {
@@ -684,11 +864,15 @@ button:disabled {
 }
 
 .siteToast.channels-added::before,
+.siteToast.channels-copied::before,
+.siteToast.telegram-saved::before,
+.siteToast.telegram-started::before,
 .siteToast.parser-started::before {
   background: #4dffc2;
 }
 
 .siteToast.parser-error::before,
+.siteToast.telegram-stopped::before,
 .siteToast.parser-stopped::before {
   background: #ff8293;
 }
@@ -717,11 +901,15 @@ button:disabled {
 }
 
 .siteToast.channels-added .siteToastIcon,
+.siteToast.channels-copied .siteToastIcon,
+.siteToast.telegram-saved .siteToastIcon,
+.siteToast.telegram-started .siteToastIcon,
 .siteToast.parser-started .siteToastIcon {
   color: #54ffc4;
 }
 
 .siteToast.parser-error .siteToastIcon,
+.siteToast.telegram-stopped .siteToastIcon,
 .siteToast.parser-stopped .siteToastIcon {
   color: #ff8a9a;
 }
@@ -853,30 +1041,30 @@ button:disabled {
   background: rgba(24, 174, 205, 0.18);
 }
 
-.deleteModeButton {
+.selectModeButton {
   width: auto;
-  min-width: 128px;
+  min-width: 136px;
   min-height: 42px;
   padding: 0 12px;
   gap: 8px;
   grid-auto-flow: column;
-  color: #ff8d9b;
+  color: #6ff4ff;
   line-height: 1;
 }
 
-.inlineIconButton.deleteModeButton {
+.inlineIconButton.selectModeButton {
   display: inline-flex;
   width: auto;
   padding: 0 12px;
 }
 
-.deleteModeButton.isActive {
-  border-color: rgba(255, 91, 112, 0.48);
-  background: rgba(255, 79, 100, 0.09);
-  box-shadow: 0 0 22px rgba(255, 79, 100, 0.13);
+.selectModeButton.isActive {
+  border-color: rgba(100, 238, 255, 0.48);
+  background: rgba(0, 216, 255, 0.09);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.13);
 }
 
-.deleteModeButton span {
+.selectModeButton span {
   display: inline-flex;
   min-width: 62px;
   align-items: center;
@@ -2098,7 +2286,17 @@ tbody tr:hover {
   }
 
   .folderControls,
+  .telegramForm,
   .folderSnapshotGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .telegramActions {
+    justify-content: flex-start;
+  }
+
+  .telegramFields,
+  .telegramFeatureGrid {
     grid-template-columns: 1fr;
   }
 

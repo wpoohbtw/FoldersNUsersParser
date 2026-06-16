@@ -14,11 +14,13 @@ from .config import load_settings
 from .db import Database
 from .folder_parser_service import FolderParserService
 from .import_service import ImportService
+from .telegram_bot_service import TelegramBotService
 
 settings = load_settings()
 db = Database(settings.db_path)
 service = ImportService(settings, db)
 folder_parser = FolderParserService(settings, db)
+telegram_bot = TelegramBotService(db)
 
 app = FastAPI(title="FoldersNUsersParser API", version="0.1.0")
 
@@ -72,6 +74,11 @@ class FolderListenerRequest(BaseModel):
     folder_id: str
 
 
+class TelegramBotConfigRequest(BaseModel):
+    bot_token: str
+    allowed_username: str
+
+
 @dataclass(slots=True)
 class PortalUser:
     user_id: str = ""
@@ -99,11 +106,14 @@ def get_portal_user(
 @app.on_event("startup")
 async def on_startup() -> None:
     db.init()
+    folder_parser.on_folder_added = telegram_bot.notify_folder_added
     await folder_parser.restore_running_listeners()
+    await telegram_bot.restore_running_bots()
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    await telegram_bot.stop_all()
     await folder_parser.stop_all()
     db.close()
 
@@ -273,6 +283,35 @@ def list_channels(table_id: int | None = None, portal_user: PortalUser = Depends
 @app.get("/api/v1/channel-tables")
 def list_channel_tables(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
     return {"items": db.list_channel_tables(portal_user_id=portal_user.user_id, portal_username=portal_user.username)}
+
+
+@app.get("/api/v1/telegram-bot")
+def get_telegram_bot_config(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return telegram_bot.get_config(portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+
+
+@app.post("/api/v1/telegram-bot")
+async def save_telegram_bot_config(payload: TelegramBotConfigRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return await telegram_bot.save_config(
+        payload.bot_token,
+        payload.allowed_username,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+
+
+@app.post("/api/v1/telegram-bot/start")
+async def start_telegram_bot(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    config = db.get_telegram_bot_config(portal_user.user_id, portal_user.username)
+    try:
+        return await telegram_bot.start_bot(config)
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.post("/api/v1/telegram-bot/stop")
+async def stop_telegram_bot(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    return await telegram_bot.stop_bot(portal_user.user_id, portal_user.username, mark_stopped=True)
 
 
 @app.get("/api/v1/channel-tables/{table_id}/access")

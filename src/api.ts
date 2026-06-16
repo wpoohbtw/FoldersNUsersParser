@@ -135,6 +135,21 @@ export type PortalUser = {
   portal_username: string;
 };
 
+export type ApiTelegramBotConfig = {
+  id: number;
+  portal_user_id: string;
+  portal_username: string;
+  bot_token: string;
+  allowed_username: string;
+  is_running: boolean;
+  chat_id: number | null;
+  main_message_id: number | null;
+  selected_table_id: number | null;
+  selected_index: number;
+  created_at: string;
+  updated_at: string;
+};
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')).replace(/\/$/, '');
 
 function delay(ms: number) {
@@ -255,6 +270,25 @@ export const api = {
   },
   async listChannelTables() {
     return request<{ items: ApiChannelTable[] }>('/api/v1/channel-tables');
+  },
+  async getTelegramBotConfig() {
+    return request<ApiTelegramBotConfig>('/api/v1/telegram-bot');
+  },
+  async saveTelegramBotConfig(botToken: string, allowedUsername: string) {
+    return request<ApiTelegramBotConfig>('/api/v1/telegram-bot', {
+      method: 'POST',
+      body: JSON.stringify({ bot_token: botToken, allowed_username: allowedUsername }),
+    });
+  },
+  async startTelegramBot() {
+    return request<ApiTelegramBotConfig>('/api/v1/telegram-bot/start', {
+      method: 'POST',
+    });
+  },
+  async stopTelegramBot() {
+    return request<ApiTelegramBotConfig>('/api/v1/telegram-bot/stop', {
+      method: 'POST',
+    });
   },
   async listChannelTableAccess(tableId: number) {
     return request<{ items: ApiChannelTableAccess[] }>(`/api/v1/channel-tables/${tableId}/access`);

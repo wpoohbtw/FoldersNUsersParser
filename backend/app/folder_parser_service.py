@@ -4,7 +4,7 @@ import asyncio
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from telethon import TelegramClient, events
 from telethon.errors.rpcerrorlist import UserAlreadyParticipantError
@@ -43,6 +43,7 @@ class FolderParserService:
         self._listeners: dict[str, ActiveFolderListener] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
+        self.on_folder_added: Callable[[str, str, str, str, int], Awaitable[None]] | None = None
 
     def _track_background_task(self, coro: Any) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -431,13 +432,15 @@ class FolderParserService:
                 return
 
             source_title = getattr(event.chat, "title", "") or getattr(event.chat, "username", "") or str(channel_id)
+            source_username = str(getattr(event.chat, "username", "") or "").lstrip("@")
+            source_url = f"https://t.me/{source_username}" if source_username else ""
             if not channel_id or channel_id not in listener.active_channel_ids:
                 self._log(listener, "warn", f"Папка найдена в неотслеживаемом канале {source_title}, пропущена")
                 return
 
             for slug, link_url in links.items():
                 self._log(listener, "info", f"Поймана папка в канале {source_title}", event_type="folder-found")
-                await self._process_addlist_link(listener, slug, link_url, channel_id, source_title)
+                await self._process_addlist_link(listener, slug, link_url, channel_id, source_title, source_url)
 
         return handler
 
@@ -448,6 +451,7 @@ class FolderParserService:
         link_url: str,
         source_channel_id: int,
         source_title: str,
+        source_url: str,
     ) -> None:
         async with listener.lock:
             if not self.db.start_folder_link_processing(
@@ -533,6 +537,7 @@ class FolderParserService:
                 )
                 if processing_status == "done":
                     self._log(listener, "success", f"{added} каналов добавлено в таблицу", event_type="channels-added")
+                    await self._notify_folder_added(listener, source_title, source_url, added)
                 else:
                     self._log(listener, "warn", f"Папка обработана частично: {added} каналов добавлено, повтор разрешен")
             except Exception as err:
@@ -828,6 +833,20 @@ class FolderParserService:
             portal_username=listener.portal_username,
             event_type=event_type,
         )
+
+    async def _notify_folder_added(self, listener: ActiveFolderListener, source_title: str, source_url: str, added: int) -> None:
+        if not self.on_folder_added:
+            return
+        try:
+            await self.on_folder_added(
+                listener.portal_user_id,
+                listener.portal_username,
+                source_title,
+                source_url,
+                int(added),
+            )
+        except Exception:
+            pass
 
     def _event_channel_id(self, event: events.NewMessage.Event) -> int:
         peer_id = getattr(getattr(event, "message", None), "peer_id", None)

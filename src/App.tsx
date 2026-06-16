@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  BellRing,
+  Bot,
   CheckCircle2,
   ChevronDown,
   Eye,
@@ -25,6 +27,7 @@ import {
   Terminal,
   Trash2,
   UploadCloud,
+  UserPlus,
   UserRoundCog,
   Users,
   X,
@@ -38,6 +41,7 @@ import {
   type ApiChannelTableAccess,
   type ApiFolder,
   type ApiFolderChannel,
+  type ApiTelegramBotConfig,
   type FolderLog,
   type ImportItem,
   type ImportJob,
@@ -66,10 +70,19 @@ const roleClassNames: Record<AccountRole, string> = {
   Папка: 'folder',
 };
 
-type AppPage = 'accounts' | 'chat' | 'folder' | 'channels';
+type AppPage = 'accounts' | 'chat' | 'folder' | 'channels' | 'telegram';
 type ListenerStatus = 'idle' | 'running';
 type ChannelReviewFilter = 'all' | 'checked' | 'unchecked' | 'rejected';
-type NotificationKind = 'folder-found' | 'channels-added' | 'parser-error' | 'parser-started' | 'parser-stopped';
+type NotificationKind =
+  | 'folder-found'
+  | 'channels-added'
+  | 'channels-copied'
+  | 'telegram-saved'
+  | 'telegram-started'
+  | 'telegram-stopped'
+  | 'parser-error'
+  | 'parser-started'
+  | 'parser-stopped';
 
 type SiteToast = {
   id: string;
@@ -84,6 +97,10 @@ const NOTIFICATION_EVENTS = new Set<NotificationKind>(['folder-found', 'channels
 const NOTIFICATION_TITLES: Record<NotificationKind, string> = {
   'folder-found': 'Папка обнаружена',
   'channels-added': 'Каналы добавлены',
+  'channels-copied': 'Каналы скопированы',
+  'telegram-saved': 'Telegram настроен',
+  'telegram-started': 'Telegram запущен',
+  'telegram-stopped': 'Telegram остановлен',
   'parser-error': 'Ошибка обработки папки',
   'parser-started': 'Парсер запущен',
   'parser-stopped': 'Парсер остановлен',
@@ -719,6 +736,8 @@ const folderUi = {
   toggleFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0441\u043b\u0443\u0448\u0430\u0442\u0435\u043b\u044c',
   returnToUnchecked: '\u0412\u0435\u0440\u043d\u0443\u0442\u044c \u0432 \u043d\u0435\u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
   deleteChannels: '\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b',
+  selectChannels: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c',
+  copyChannels: '\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c',
   selectChannel: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u043a\u0430\u043d\u0430\u043b',
   selected: '\u0432\u044b\u0431\u0440\u0430\u043d\u043e',
   deleteSelected: '\u0423\u0434\u0430\u043b\u0438\u0442\u044c',
@@ -779,6 +798,10 @@ function channelMatchesSearch(channel: ApiFolderChannel, normalizedSearch: strin
 function getToastIcon(kind: NotificationKind) {
   if (kind === 'folder-found') return <FolderOpen size={17} />;
   if (kind === 'channels-added') return <CheckCircle2 size={17} />;
+  if (kind === 'channels-copied') return <Link2 size={17} />;
+  if (kind === 'telegram-saved') return <CheckCircle2 size={17} />;
+  if (kind === 'telegram-started') return <Bot size={17} />;
+  if (kind === 'telegram-stopped') return <Square size={16} />;
   if (kind === 'parser-error') return <X size={17} />;
   if (kind === 'parser-started') return <Play size={17} />;
   return <Square size={16} />;
@@ -1000,7 +1023,7 @@ function ChannelAccessModal({
         <div className="accessAddRow">
           <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder={folderUi.usernamePlaceholder} />
           <button className="primaryButton" type="button" onClick={() => void addAccess()} disabled={isSaving || !username.trim() || !table.is_owner}>
-            {isSaving ? <Loader2 className="spinIcon" size={16} /> : <Link2 size={16} />}
+            {isSaving ? <Loader2 className="spinIcon" size={16} /> : <UserPlus size={16} />}
             {folderUi.addUser}
           </button>
         </div>
@@ -1032,7 +1055,7 @@ function ChannelAccessModal({
   );
 }
 
-function ChannelsPage() {
+function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   const [channels, setChannels] = useState<ApiFolderChannel[]>([]);
   const [channelTables, setChannelTables] = useState<ApiChannelTable[]>([]);
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
@@ -1043,7 +1066,7 @@ function ChannelsPage() {
   const [searchValue, setSearchValue] = useState('');
   const [isLoadingChannels, setIsLoadingChannels] = useState(true);
   const [channelsError, setChannelsError] = useState('');
-  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
   const selectedTable = channelTables.find((table) => table.id === selectedTableId) || channelTables[0] || null;
 
@@ -1092,7 +1115,7 @@ function ChannelsPage() {
   useEffect(() => {
     if (selectedTableId) {
       setSelectedChannelIds([]);
-      setDeleteMode(false);
+      setSelectionMode(false);
       void loadChannels(selectedTableId);
     }
   }, [selectedTableId]);
@@ -1147,16 +1170,34 @@ function ChannelsPage() {
     setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'unchecked' } : channel)));
   }
 
-  async function toggleDeleteMode() {
-    if (deleteMode && selectedChannelIds.length) {
-      await api.deleteChannels(selectedChannelIds, selectedTableId || undefined);
-      setChannels((items) => items.filter((channel) => !selectedChannelIds.includes(channel.channel_id)));
-      setSelectedChannelIds([]);
-      setDeleteMode(false);
-      return;
-    }
-    setDeleteMode((value) => !value);
+  function toggleSelectionMode() {
+    setSelectionMode((value) => !value);
     setSelectedChannelIds([]);
+  }
+
+  async function deleteSelectedChannels() {
+    if (!selectedChannelIds.length) return;
+    await api.deleteChannels(selectedChannelIds, selectedTableId || undefined);
+    setChannels((items) => items.filter((channel) => !selectedChannelIds.includes(channel.channel_id)));
+    setSelectedChannelIds([]);
+    setSelectionMode(false);
+  }
+
+  async function copySelectedChannels() {
+    const text = channels
+      .filter((channel) => selectedChannelIds.includes(channel.channel_id))
+      .map((channel) => channel.url)
+      .filter(Boolean)
+      .join('\n');
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    onToast({
+      id: `channels_copied_${Date.now()}`,
+      kind: 'channels-copied',
+      title: NOTIFICATION_TITLES['channels-copied'],
+      message: `${selectedChannelIds.length} каналов скопировано в буфер обмена`,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   const filters: Array<{ id: ChannelReviewFilter; label: string; count: number }> = [
@@ -1207,12 +1248,12 @@ function ChannelsPage() {
               </div>
             )}
             <button className="inlineIconButton tableAccessButton" type="button" onClick={() => setIsAccessModalOpen(true)} disabled={!selectedTable} title={folderUi.tableAccess} aria-label={folderUi.tableAccess}>
-              <Link2 size={16} />
+              <UserPlus size={16} />
             </button>
             <label className="channelSearch"><Search size={16} /><input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder={folderUi.search} /></label>
-            <button className={`inlineIconButton deleteModeButton${deleteMode ? ' isActive' : ''}`} type="button" onClick={() => void toggleDeleteMode()} title={folderUi.deleteChannels} aria-label={folderUi.deleteChannels}>
-              <Trash2 size={16} />
-              {deleteMode && <span>{selectedChannelIds.length > 0 ? `${folderUi.deleteSelected} ${selectedChannelIds.length}` : folderUi.chooseChannels}</span>}
+            <button className={`inlineIconButton selectModeButton${selectionMode ? ' isActive' : ''}`} type="button" onClick={toggleSelectionMode} title={folderUi.selectChannels} aria-label={folderUi.selectChannels}>
+              <CheckCircle2 size={16} />
+              <span>{selectedChannelIds.length ? `${folderUi.selectChannels} (${selectedChannelIds.length})` : folderUi.selectChannels}</span>
             </button>
           </div>
         </header>
@@ -1220,13 +1261,23 @@ function ChannelsPage() {
           {filters.map((filter) => (
             <button className={`channelFilterButton${activeFilter === filter.id ? ' isActive' : ''}`} type="button" onClick={() => setActiveFilter(filter.id)} key={filter.id}>{filter.label} <span>({filter.count})</span></button>
           ))}
+          {selectionMode && (
+            <div className="channelFilterActions">
+              <button className="inlineIconButton filterActionButton delete" type="button" onClick={() => void deleteSelectedChannels()} disabled={!selectedChannelIds.length} title={folderUi.deleteChannels} aria-label={folderUi.deleteChannels}>
+                <Trash2 size={16} />
+              </button>
+              <button className="inlineIconButton filterActionButton copy" type="button" onClick={() => void copySelectedChannels()} disabled={!selectedChannelIds.length} title={folderUi.copyChannels} aria-label={folderUi.copyChannels}>
+                <Link2 size={16} />
+              </button>
+            </div>
+          )}
         </div>
         {channelsError && <div className="folderInlineError">{channelsError}</div>}
         <div className="animatedTableShell">
           <div className="animatedTableGradient top" />
           <div className="folderChannelsScroll channelsReviewScroll">
             <table className="folderChannelsTable channelReviewTable">
-              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{deleteMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th>{folderUi.subscribers}</th><th>Avg views</th><th>{folderUi.folder}</th><th>{folderUi.addedAt}</th><th>{folderUi.review}</th></tr></thead>
+              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th>{folderUi.subscribers}</th><th>Avg views</th><th>{folderUi.folder}</th><th>{folderUi.addedAt}</th><th>{folderUi.review}</th></tr></thead>
               <tbody>
                 {visibleChannels.length ? visibleChannels.map((channel, index) => {
                   const isExpanded = expandedChannelId === channel.id;
@@ -1236,7 +1287,7 @@ function ChannelsPage() {
                       <td>
                         <div className="channelIdentity">
                           <span className="channelSelectSlot">
-                            {deleteMode && (
+                            {selectionMode && (
                               <button className={`channelSelectBox${isSelected ? ' isSelected' : ''}`} type="button" onClick={() => toggleSelectedChannel(channel.channel_id)} title={folderUi.selectChannel} aria-label={folderUi.selectChannel}>
                                 {isSelected && <CheckCircle2 size={14} />}
                               </button>
@@ -1273,13 +1324,151 @@ function ChannelsPage() {
   );
 }
 
+type TelegramBotSettings = {
+  botApi: string;
+  username: string;
+  isRunning: boolean;
+};
+
+function telegramSettingsFromConfig(config: ApiTelegramBotConfig): TelegramBotSettings {
+  return {
+    botApi: config.bot_token || '',
+    username: config.allowed_username || '',
+    isRunning: Boolean(config.is_running),
+  };
+}
+
+function TelegramPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
+  const [settings, setSettings] = useState<TelegramBotSettings>({ botApi: '', username: '', isRunning: false });
+  const [isTelegramBusy, setIsTelegramBusy] = useState(false);
+
+  useEffect(() => {
+    api.getTelegramBotConfig()
+      .then((config) => setSettings(telegramSettingsFromConfig(config)))
+      .catch(() => undefined);
+  }, []);
+
+  function showTelegramToast(kind: 'telegram-saved' | 'telegram-started' | 'telegram-stopped', message: string) {
+    onToast({
+      id: `${kind}_${Date.now()}`,
+      kind,
+      title: NOTIFICATION_TITLES[kind],
+      message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  async function saveSettings() {
+    setIsTelegramBusy(true);
+    try {
+      const config = await api.saveTelegramBotConfig(settings.botApi.trim(), settings.username.trim());
+      setSettings(telegramSettingsFromConfig(config));
+      showTelegramToast('telegram-saved', 'Параметры Telegram-бота сохранены для текущего пользователя');
+    } finally {
+      setIsTelegramBusy(false);
+    }
+  }
+
+  async function toggleBot() {
+    const botApi = settings.botApi.trim();
+    const username = settings.username.trim();
+    if (!settings.isRunning && (!botApi || !username)) {
+      return;
+    }
+    setIsTelegramBusy(true);
+    try {
+      if (!settings.isRunning) {
+        await api.saveTelegramBotConfig(botApi, username);
+      }
+      const config = settings.isRunning ? await api.stopTelegramBot() : await api.startTelegramBot();
+      const nextSettings = telegramSettingsFromConfig(config);
+      setSettings(nextSettings);
+      showTelegramToast(
+        nextSettings.isRunning ? 'telegram-started' : 'telegram-stopped',
+        nextSettings.isRunning ? 'Telegram-бот запущен' : 'Telegram-бот остановлен',
+      );
+    } finally {
+      setIsTelegramBusy(false);
+    }
+  }
+
+  const canStart = Boolean(settings.botApi.trim() && settings.username.trim());
+
+  return (
+    <>
+      <section className="telegramPanel">
+        <header className="panelHeader telegramPanelHeader">
+          <div>
+            <span className="telegramKicker">Telegram</span>
+            <h2>Telegram-бот</h2>
+            <p>Уведомления о новых папках и быстрый разбор каналов прямо в боте.</p>
+          </div>
+          <span className={`listenerDot telegramRunDot ${settings.isRunning ? 'running' : 'idle'}`} title={settings.isRunning ? 'Запущен' : 'Остановлен'} aria-label={settings.isRunning ? 'Запущен' : 'Остановлен'} />
+        </header>
+        <div className="telegramForm">
+          <div className="telegramFields">
+            <label className="telegramField">
+              <span>API бота</span>
+              <input
+                type="password"
+                value={settings.botApi}
+                onChange={(event) => setSettings((value) => ({ ...value, botApi: event.target.value }))}
+                placeholder="123456:ABC..."
+                autoComplete="off"
+              />
+            </label>
+            <label className="telegramField">
+              <span>Username пользователя</span>
+              <input
+                value={settings.username}
+                onChange={(event) => setSettings((value) => ({ ...value, username: event.target.value }))}
+                placeholder="@username"
+                autoComplete="off"
+              />
+            </label>
+          </div>
+          <div className="telegramActions">
+            <button className="iconButton telegramActionButton" type="button" onClick={() => void saveSettings()} disabled={isTelegramBusy} title="Сохранить" aria-label="Сохранить">
+              {isTelegramBusy ? <Loader2 className="spinIcon" size={17} /> : <CheckCircle2 size={17} />}
+            </button>
+            <button className="iconButton telegramActionButton primary" type="button" onClick={() => void toggleBot()} disabled={isTelegramBusy || (!settings.isRunning && !canStart)} title={settings.isRunning ? 'Остановить' : 'Запустить'} aria-label={settings.isRunning ? 'Остановить' : 'Запустить'}>
+              {isTelegramBusy ? <Loader2 className="spinIcon" size={17} /> : settings.isRunning ? <Square size={17} /> : <Play size={17} />}
+            </button>
+          </div>
+          <div className="telegramFeatureGrid">
+            <article>
+              <BellRing size={18} />
+              <div>
+                <strong>Уведомления о новых папках</strong>
+                <span>Готово для подключения backend-бота</span>
+              </div>
+            </article>
+            <article>
+              <CheckCircle2 size={18} />
+              <div>
+                <strong>Сортировка каналов</strong>
+                <span>Проверенные / Не подходят</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
 function FolderLogsConsole({ logs, onClear, isClearing }: { logs: FolderLog[]; onClear: () => void; isClearing: boolean }) {
   const logLabels: Record<string, string> = { info: 'INFO', success: 'OK', warn: 'WARN', system: 'SYSTEM', scan: 'SCAN' };
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const didInitialScrollRef = useRef(false);
   useEffect(() => {
     const body = bodyRef.current;
-    if (body) body.scrollTop = body.scrollHeight;
-  }, [logs]);
+    if (!body || didInitialScrollRef.current || !logs.length) return;
+    didInitialScrollRef.current = true;
+    window.requestAnimationFrame(() => {
+      body.scrollTop = body.scrollHeight;
+    });
+  }, [logs.length]);
   return (
     <section className="folderLogsPanel">
       <header className="folderLogsHeader">
@@ -1424,7 +1613,7 @@ function getStoredPage(storageKey = APP_PAGE_STORAGE_KEY): AppPage {
     return 'accounts';
   }
   const value = window.localStorage.getItem(storageKey);
-  return value === 'accounts' || value === 'chat' || value === 'folder' || value === 'channels' ? value : 'accounts';
+  return value === 'accounts' || value === 'chat' || value === 'folder' || value === 'channels' || value === 'telegram' ? value : 'accounts';
 }
 
 export function App() {
@@ -1464,6 +1653,10 @@ export function App() {
     const baseFrequencies: Record<NotificationKind, number> = {
       'folder-found': 620,
       'channels-added': 760,
+      'channels-copied': 700,
+      'telegram-saved': 620,
+      'telegram-started': 700,
+      'telegram-stopped': 340,
       'parser-error': 210,
       'parser-started': 520,
       'parser-stopped': 340,
@@ -1617,6 +1810,7 @@ export function App() {
     { icon: <MessageCircle size={22} />, label: 'Chat', active: activePage === 'chat', onClick: () => setActivePage('chat') },
     { icon: <Folder size={22} />, label: 'Folder', active: activePage === 'folder', onClick: () => setActivePage('folder') },
     { icon: <RadioTower size={22} />, label: 'Каналы', active: activePage === 'channels', onClick: () => setActivePage('channels') },
+    { icon: <Bot size={22} />, label: 'Telegram', active: activePage === 'telegram', onClick: () => setActivePage('telegram') },
   ];
   const portalHomeItem = { icon: <Home size={22} />, label: 'На главную', onClick: () => { window.location.href = '/'; } };
 
@@ -1701,7 +1895,8 @@ export function App() {
           </>
         )}
         {activePage === 'folder' && <FoldersPage accounts={accounts} portalUser={portalUser} />}
-        {activePage === 'channels' && <ChannelsPage />}
+        {activePage === 'channels' && <ChannelsPage onToast={showToast} />}
+        {activePage === 'telegram' && <TelegramPage onToast={showToast} />}
         {activePage === 'chat' && (
           <section className="placeholderPanel">
             <h1>Chat</h1>
