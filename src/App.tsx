@@ -127,6 +127,34 @@ function getActivePageStorageKey(portalUserKey: string) {
   return `${APP_PAGE_STORAGE_KEY}.${portalUserKey || 'anonymous'}`;
 }
 
+async function copyTextToClipboard(text: string) {
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fallback below covers Portal iframe/browser permission edge cases.
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    if (!document.execCommand('copy')) {
+      throw new Error('Copy command failed');
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 function maskPhone(phone: string) {
   if (!phone) {
     return 'не прочитан';
@@ -1193,13 +1221,13 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   }
 
   async function copySelectedChannels() {
-    const text = channels
+    const urls = channels
       .filter((channel) => selectedChannelIds.includes(channel.channel_id))
       .map((channel) => channel.url)
-      .filter(Boolean)
-      .join('\n');
+      .filter(Boolean);
+    const text = urls.join('\n');
     if (!text) return;
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
     onToast({
       id: `channels_copied_${Date.now()}`,
       kind: 'channels-copied',
