@@ -450,6 +450,7 @@ class FolderParserService:
             active_before = set(listener.active_channel_ids)
             resolved_entities: list[Any] = []
             input_peers: list[Any] = []
+            prepared_channel_ids: set[int] = set()
             failed = 0
 
             for ref in refs:
@@ -464,12 +465,15 @@ class FolderParserService:
                             await listener.client(JoinChannelRequest(entity))
                         except UserAlreadyParticipantError:
                             pass
+                        prepared_channel_ids.add(channel_id)
                         input_peers.append(await listener.client.get_input_entity(entity))
+                    else:
+                        prepared_channel_ids.add(channel_id)
                 except Exception as err:
                     failed += 1
                     self._log(listener, "warn", f"Не удалось подготовить канал {ref}: {err}")
 
-            await self._add_peers_to_folder(listener, input_peers)
+            added_to_folder_ids = await self._add_peers_to_folder(listener, input_peers)
             try:
                 refreshed_folder_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
                 listener.active_channel_ids = self._folder_filter_channel_ids(refreshed_folder_filter)
@@ -480,10 +484,17 @@ class FolderParserService:
             added = 0
             for entity in resolved_entities:
                 channel_id = int(getattr(entity, "id", 0) or 0)
-                if channel_id not in listener.active_channel_ids:
+                is_ready = (
+                    channel_id in listener.active_channel_ids
+                    or channel_id in added_to_folder_ids
+                    or channel_id in prepared_channel_ids
+                )
+                if not is_ready:
                     failed += 1
-                    self._log(listener, "warn", f"Канал {getattr(entity, 'title', channel_id)} не найден в целевой папке после добавления")
+                    self._log(listener, "warn", f"Канал {getattr(entity, 'title', channel_id)} не подготовлен для сохранения")
                     continue
+                if channel_id not in listener.active_channel_ids:
+                    self._log(listener, "warn", f"Канал {getattr(entity, 'title', channel_id)} не закрепился в папке, сохраняю стату и таблицу после подписки")
                 profile = await self._read_channel_profile(listener.client, entity, listener)
                 row_id = self.db.upsert_folder_channel(
                     channel_id=channel_id,
@@ -504,7 +515,7 @@ class FolderParserService:
                     if channel_id not in active_before:
                         added += 1
 
-            self._log(listener, "success" if saved else "warn", f"Ручные каналы обработаны: сохранено {saved}, новых в папке {added}, ошибок {failed}")
+            self._log(listener, "success" if saved else "warn", f"Ручные каналы обработаны: сохранено {saved}, новых для таблицы {added}, ошибок {failed}")
 
     def list_channels(
         self,
@@ -804,12 +815,20 @@ class FolderParserService:
             self._log(listener, "warn", f"Не удалось обновить слушаемую папку: {err}")
             return set()
 
-        try:
-            refreshed_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
-            verified_ids = self._folder_filter_channel_ids(refreshed_filter)
-        except Exception as err:
-            self._log(listener, "warn", f"Не удалось проверить обновление слушаемой папки: {err}")
-            return set()
+        verified_ids: set[int] = set()
+        for attempt in range(5):
+            if attempt:
+                await asyncio.sleep(0.7)
+            try:
+                refreshed_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
+                verified_ids = self._folder_filter_channel_ids(refreshed_filter)
+            except Exception as err:
+                if attempt == 4:
+                    self._log(listener, "warn", f"Не удалось проверить обновление слушаемой папки: {err}")
+                    return set()
+                continue
+            if target_ids <= verified_ids:
+                break
         self._log(listener, "system", f"Проверка добавления в папку: закреплено {len(target_ids & verified_ids)} из {len(target_ids)}")
         return target_ids & verified_ids
 
