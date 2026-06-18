@@ -122,6 +122,10 @@ export type FolderListenerStatus = {
   channels: number;
   duplicate?: boolean;
   message?: string;
+  queued?: boolean;
+  processed?: number;
+  added?: number;
+  failed?: number;
 };
 
 export type FolderLog = {

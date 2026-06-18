@@ -434,6 +434,17 @@ class FolderParserService:
         if not listener:
             raise ValueError("Запустите слушатель папки перед ручным добавлением")
 
+        self._log(listener, "info", f"Ручное добавление каналов поставлено в очередь: {len(refs)}")
+        self._track_background_task(self._process_manual_channels_background(listener, refs))
+        return {
+            **self._listener_payload(listener, "running"),
+            "queued": True,
+            "processed": 0,
+            "added": 0,
+            "failed": 0,
+        }
+
+    async def _process_manual_channels_background(self, listener: ActiveFolderListener, refs: list[str]) -> None:
         async with listener.lock:
             self._log(listener, "info", f"Ручное добавление каналов: {len(refs)}")
             active_before = set(listener.active_channel_ids)
@@ -494,12 +505,6 @@ class FolderParserService:
                         added += 1
 
             self._log(listener, "success" if saved else "warn", f"Ручные каналы обработаны: сохранено {saved}, новых в папке {added}, ошибок {failed}")
-            return {
-                **self._listener_payload(listener, "running"),
-                "processed": saved,
-                "added": added,
-                "failed": failed,
-            }
 
     def list_channels(
         self,
