@@ -74,6 +74,10 @@ class FolderListenerRequest(BaseModel):
     folder_id: str
 
 
+class ManualFolderAddRequest(BaseModel):
+    link_url: str
+
+
 class TelegramBotConfigRequest(BaseModel):
     bot_token: str
     allowed_username: str
@@ -233,6 +237,18 @@ async def stop_folder_listener(payload: FolderListenerRequest, portal_user: Port
         portal_user_id=portal_user.user_id,
         portal_username=portal_user.username,
     )
+
+
+@app.post("/api/v1/folders/listener/manual-add")
+async def manual_add_folder(payload: ManualFolderAddRequest, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    try:
+        return await folder_parser.process_manual_addlist(
+            payload.link_url,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @app.get("/api/v1/folders/channels")

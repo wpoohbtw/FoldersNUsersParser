@@ -723,6 +723,12 @@ const folderUi = {
   account: '\u0410\u043a\u043a\u0430\u0443\u043d\u0442',
   noAccounts: '\u041d\u0435\u0442 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u043e\u0432',
   getFolders: '\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0438',
+  manualAdd: '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0432\u0440\u0443\u0447\u043d\u0443\u044e',
+  manualAddTitle: '\u0420\u0443\u0447\u043d\u0430\u044f \u043f\u0430\u043f\u043a\u0430',
+  manualAddSubtitle: '\u0412\u0441\u0442\u0430\u0432\u044c\u0442\u0435 addlist-\u0441\u0441\u044b\u043b\u043a\u0443',
+  manualAddPlaceholder: 'https://t.me/addlist/...',
+  manualAddFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0443',
+  cancel: '\u041e\u0442\u043c\u0435\u043d\u0430',
   noFolderSelected: '\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u0430',
   noFolders: '\u041f\u0430\u043f\u043e\u043a \u043d\u0435\u0442',
   channelsCount: '\u043a\u0430\u043d\u0430\u043b\u043e\u0432',
@@ -1482,6 +1488,56 @@ function FolderLogsConsole({ logs, onClear, isClearing }: { logs: FolderLog[]; o
   );
 }
 
+function ManualFolderModal({
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  isSubmitting: boolean;
+  error: string;
+  onClose: () => void;
+  onSubmit: (linkUrl: string) => Promise<void>;
+}) {
+  const [linkUrl, setLinkUrl] = useState('');
+
+  async function submitManualFolder() {
+    const value = linkUrl.trim();
+    if (!value) return;
+    await onSubmit(value);
+  }
+
+  return (
+    <div className="modalBackdrop" role="presentation" onMouseDown={onClose}>
+      <section className="importModal manualFolderModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modalHeader">
+          <div>
+            <span className="modalKicker">{folderUi.manualAdd}</span>
+            <h2>{folderUi.manualAddTitle}</h2>
+          </div>
+          <button className="modalClose" type="button" onClick={onClose} aria-label="Close">
+            <X size={20} />
+          </button>
+        </header>
+        <div className="manualFolderBody">
+          <label className="fieldBlock">
+            <span>{folderUi.manualAddSubtitle}</span>
+            <input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder={folderUi.manualAddPlaceholder} autoFocus />
+          </label>
+          {error && <div className="folderInlineError">{error}</div>}
+        </div>
+        <footer>
+          <button className="ghostButton" type="button" onClick={onClose} disabled={isSubmitting}>{folderUi.cancel}</button>
+          <button className="primaryButton" type="button" onClick={() => void submitManualFolder()} disabled={isSubmitting || !linkUrl.trim()}>
+            {isSubmitting ? <Loader2 className="spinIcon" size={16} /> : <Link2 size={16} />}
+            {folderUi.manualAdd}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalUser: PortalUser | null }) {
   void portalUser;
   const [selectedAccountId, setSelectedAccountId] = useState('');
@@ -1496,6 +1552,9 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
   const [isLoadingChannels, setIsLoadingChannels] = useState(false);
   const [folderLogs, setFolderLogs] = useState<FolderLog[]>([]);
   const [isClearingLogs, setIsClearingLogs] = useState(false);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [manualAddError, setManualAddError] = useState('');
+  const [isManualAdding, setIsManualAdding] = useState(false);
 
   async function loadFolderLogs() { const payload = await api.listFolderLogs(); setFolderLogs(payload.items); }
   async function loadFolderChannels(accountId: number, folderId: string) {
@@ -1584,6 +1643,22 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
     } catch (err) { setFolderError(err instanceof Error ? err.message : folderUi.toggleFailed); } finally { setIsTogglingListener(false); }
   }
   async function clearFolderLogs() { setIsClearingLogs(true); try { await api.clearFolderLogs(); setFolderLogs([]); } finally { setIsClearingLogs(false); } }
+  async function submitManualFolder(linkUrl: string) {
+    const accountId = Number(selectedAccountId);
+    if (status !== 'running' || !accountId || !selectedFolderId) return;
+    setManualAddError('');
+    setIsManualAdding(true);
+    try {
+      const payload = await api.manualAddFolder(linkUrl);
+      setStatus(payload.status === 'running' ? 'running' : 'idle');
+      await Promise.all([loadFolderChannels(accountId, selectedFolderId), loadFolderLogs()]);
+      setIsManualModalOpen(false);
+    } catch (err) {
+      setManualAddError(err instanceof Error ? err.message : folderUi.manualAddFailed);
+    } finally {
+      setIsManualAdding(false);
+    }
+  }
 
   const selectedAccount = accounts.find((account) => String(account.account_id) === selectedAccountId);
   const selectedFolder = folders.find((folderItem) => folderItem.id === selectedFolderId);
@@ -1597,13 +1672,14 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
           <div className="fieldBlock"><span>{folderUi.account}</span><div className={`customSelect accountSelect${openDropdown === 'account' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'account' ? null : 'account'))} disabled={!accounts.length || status === 'running'}>{selectedAccount ? <span className="selectAccountValue"><Avatar item={selectedAccount} /><span><strong>{getDisplayName(selectedAccount)}</strong><em>{selectedAccount.username || '@unknown'}</em></span></span> : <span className="selectPlaceholder">{folderUi.noAccounts}</span>}<ChevronDown size={16} /></button>{openDropdown === 'account' && <div className="customSelectMenu">{accounts.length ? accounts.map((account) => <button className={`customSelectOption accountOption${String(account.account_id) === selectedAccountId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedAccountId(String(account.account_id)); setFolderError(''); setStatus('idle'); setOpenDropdown(null); }} key={account.account_id}><Avatar item={account} /><span><strong>{getDisplayName(account)}</strong><em>{account.username || '@unknown'}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noAccounts}</span>}</div>}</div></div>
           <button className="iconButton folderFetchButton" type="button" onClick={fetchFolders} disabled={!selectedAccountId || isFetchingFolders || status === 'running'} title={folderUi.getFolders} aria-label={folderUi.getFolders}>{isFetchingFolders ? <Loader2 className="spinIcon" size={17} /> : <RefreshCw size={17} />}</button>
           <div className="fieldBlock"><span>{folderUi.folder}</span><div className={`customSelect${openDropdown === 'folder' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'folder' ? null : 'folder'))} disabled={status === 'running'}><span className="selectFolderValue">{selectedFolder?.title || (folders.length ? folderUi.noFolderSelected : folderUi.noFolders)}</span><ChevronDown size={16} /></button>{openDropdown === 'folder' && <div className="customSelectMenu">{folders.length ? folders.map((folderItem) => <button className={`customSelectOption folderOption${folderItem.id === selectedFolderId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedFolderId(folderItem.id); setOpenDropdown(null); }} key={folderItem.id}><FolderOpen size={17} /><span><strong>{folderItem.title}</strong><em>{folderItem.channels} {folderUi.channelsCount}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noFolders}</span>}</div>}</div></div>
-          <div className="folderRunBar"><button className="primaryButton" type="button" onClick={() => void toggleListening()} disabled={!selectedAccountId || !selectedFolderId || isTogglingListener}>{isTogglingListener ? <Loader2 className="spinIcon" size={16} /> : status === 'running' ? <Square size={16} /> : <Play size={16} />}{status === 'running' ? folderUi.stop : folderUi.start}</button><span className={`listenerDot ${status}`} title={status === 'running' ? folderUi.started : folderUi.stopped} aria-label={status === 'running' ? folderUi.started : folderUi.stopped} /></div>
+          <div className="folderRunBar"><button className="iconButton manualFolderButton" type="button" onClick={() => { setManualAddError(''); setIsManualModalOpen(true); }} disabled={status !== 'running' || isManualAdding} title={folderUi.manualAdd} aria-label={folderUi.manualAdd}>{isManualAdding ? <Loader2 className="spinIcon" size={16} /> : <Link2 size={16} />}</button><button className="primaryButton" type="button" onClick={() => void toggleListening()} disabled={!selectedAccountId || !selectedFolderId || isTogglingListener}>{isTogglingListener ? <Loader2 className="spinIcon" size={16} /> : status === 'running' ? <Square size={16} /> : <Play size={16} />}{status === 'running' ? folderUi.stop : folderUi.start}</button><span className={`listenerDot ${status}`} title={status === 'running' ? folderUi.started : folderUi.stopped} aria-label={status === 'running' ? folderUi.started : folderUi.stopped} /></div>
         </div>
         {folderError && <div className="folderInlineError">{folderError}</div>}
       </section>
       <section className="folderSnapshotGrid"><article className="folderSnapshot wide"><span><UserRoundCog size={18} /></span><div><p>{folderUi.account}</p><strong>{selectedAccount ? getDisplayName(selectedAccount) : '?'}</strong></div></article><article className="folderSnapshot"><span><FolderOpen size={18} /></span><div><p>{folderUi.folder}</p><strong>{selectedFolder?.title || '?'}</strong></div></article><article className="folderSnapshot"><span><RadioTower size={18} /></span><div><p>{folderUi.channels}</p><strong>{folderChannels.length || selectedFolder?.channels || '?'}</strong></div></article></section>
       <FolderChannelsTable channels={folderChannels} isLoading={isLoadingChannels} />
       <FolderLogsConsole logs={folderLogs} onClear={() => void clearFolderLogs()} isClearing={isClearingLogs} />
+      {isManualModalOpen && <ManualFolderModal isSubmitting={isManualAdding} error={manualAddError} onClose={() => setIsManualModalOpen(false)} onSubmit={submitManualFolder} />}
     </>
   );
 }

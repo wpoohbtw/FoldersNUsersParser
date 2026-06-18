@@ -400,6 +400,23 @@ class FolderParserService:
                 return self._listener_payload(listener, "running")
         return {"status": "idle", "channels": 0}
 
+    async def process_manual_addlist(self, link_url: str, portal_user_id: str = "", portal_username: str = "") -> dict:
+        value = link_url.strip()
+        match = ADDLIST_RE.search(value)
+        if not match:
+            raise ValueError("Укажите ссылку вида https://t.me/addlist/...")
+
+        owner_prefix = portal_user_id or f"username:{portal_username}" or "anonymous"
+        listener = next((item for key, item in self._listeners.items() if key.startswith(f"{owner_prefix}:")), None)
+        if not listener:
+            raise ValueError("Запустите слушатель папки перед ручным добавлением")
+
+        slug = match.group(1)
+        normalized_url = f"https://t.me/addlist/{slug}"
+        self._log(listener, "info", "Папка добавлена вручную", event_type="folder-found")
+        await self._process_addlist_link(listener, slug, normalized_url, 0, "Ручное добавление", "")
+        return self._listener_payload(listener, "running")
+
     def list_channels(
         self,
         account_id: int | None = None,

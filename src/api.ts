@@ -257,6 +257,12 @@ export const api = {
       body: JSON.stringify({ account_id: accountId, folder_id: folderId }),
     });
   },
+  async manualAddFolder(linkUrl: string) {
+    return request<FolderListenerStatus>('/api/v1/folders/listener/manual-add', {
+      method: 'POST',
+      body: JSON.stringify({ link_url: linkUrl }),
+    });
+  },
   async listFolderChannels(accountId?: number, folderId?: string) {
     const params = new URLSearchParams();
     if (accountId) {

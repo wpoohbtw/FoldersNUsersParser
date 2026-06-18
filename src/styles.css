@@ -529,6 +529,13 @@ button:disabled {
   border-radius: 14px;
 }
 
+.manualFolderButton {
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  border-radius: 14px;
+}
+
 .folderRunBar {
   display: flex;
   align-items: center;
@@ -1137,6 +1144,32 @@ button:disabled {
   color: #dffbff;
   font: inherit;
   outline: none;
+}
+
+.manualFolderModal {
+  width: min(560px, 100%);
+}
+
+.manualFolderBody {
+  display: grid;
+  gap: 14px;
+  margin: 22px 0;
+}
+
+.manualFolderBody input {
+  min-height: 48px;
+  border: 1px solid rgba(83, 220, 255, 0.24);
+  border-radius: 14px;
+  padding: 0 14px;
+  background: rgba(3, 13, 22, 0.74);
+  color: #dffbff;
+  font: inherit;
+  outline: none;
+}
+
+.manualFolderBody input:focus {
+  border-color: rgba(100, 238, 255, 0.48);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.12);
 }
 
 .accessList {
