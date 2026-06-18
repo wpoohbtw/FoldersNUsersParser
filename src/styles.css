@@ -1156,18 +1156,20 @@ button:disabled {
   margin: 22px 0;
 }
 
-.manualFolderBody input {
-  min-height: 48px;
+.manualFolderBody textarea {
+  min-height: 132px;
+  resize: vertical;
   border: 1px solid rgba(83, 220, 255, 0.24);
   border-radius: 14px;
-  padding: 0 14px;
+  padding: 13px 14px;
   background: rgba(3, 13, 22, 0.74);
   color: #dffbff;
   font: inherit;
+  line-height: 1.45;
   outline: none;
 }
 
-.manualFolderBody input:focus {
+.manualFolderBody textarea:focus {
   border-color: rgba(100, 238, 255, 0.48);
   box-shadow: 0 0 22px rgba(0, 216, 255, 0.12);
 }

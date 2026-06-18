@@ -18,6 +18,7 @@ from .db import Database
 
 
 ADDLIST_RE = re.compile(r"https?://t\.me/addlist/([A-Za-z0-9_-]+)", re.IGNORECASE)
+CHANNEL_REF_RE = re.compile(r"(?:https?://)?(?:t\.me|telegram\.me)/(@?[A-Za-z0-9_]{4,})|@([A-Za-z0-9_]{4,})", re.IGNORECASE)
 LISTENER_RECONNECT_DELAY_SECONDS = 10
 LISTENER_HEARTBEAT_SECONDS = 60
 LISTENER_HEARTBEAT_TIMEOUT_SECONDS = 30
@@ -404,7 +405,7 @@ class FolderParserService:
         value = link_url.strip()
         match = ADDLIST_RE.search(value)
         if not match:
-            raise ValueError("Укажите ссылку вида https://t.me/addlist/...")
+            return await self.process_manual_channels(value, portal_user_id=portal_user_id, portal_username=portal_username)
 
         owner_prefix = portal_user_id or f"username:{portal_username}" or "anonymous"
         listener = next((item for key, item in self._listeners.items() if key.startswith(f"{owner_prefix}:")), None)
@@ -422,6 +423,83 @@ class FolderParserService:
         self._log(listener, "info", "Папка добавлена вручную", event_type="folder-found")
         await self._process_addlist_link(listener, slug, normalized_url, 0, "Ручное добавление", "", force=force)
         return self._listener_payload(listener, "running")
+
+    async def process_manual_channels(self, raw_value: str, portal_user_id: str = "", portal_username: str = "") -> dict:
+        refs = self._extract_channel_refs(raw_value)
+        if not refs:
+            raise ValueError("Укажите addlist-ссылку или ссылки на каналы t.me/... списком")
+
+        owner_prefix = portal_user_id or f"username:{portal_username}" or "anonymous"
+        listener = next((item for key, item in self._listeners.items() if key.startswith(f"{owner_prefix}:")), None)
+        if not listener:
+            raise ValueError("Запустите слушатель папки перед ручным добавлением")
+
+        async with listener.lock:
+            self._log(listener, "info", f"Ручное добавление каналов: {len(refs)}")
+            active_before = set(listener.active_channel_ids)
+            resolved_entities: list[Any] = []
+            input_peers: list[Any] = []
+            failed = 0
+
+            for ref in refs:
+                try:
+                    entity = await listener.client.get_entity(ref)
+                    channel_id = int(getattr(entity, "id", 0) or 0)
+                    if channel_id <= 0 or (not getattr(entity, "broadcast", False) and not getattr(entity, "megagroup", False)):
+                        raise ValueError("not a channel")
+                    resolved_entities.append(entity)
+                    if channel_id not in listener.active_channel_ids:
+                        try:
+                            await listener.client(JoinChannelRequest(entity))
+                        except UserAlreadyParticipantError:
+                            pass
+                        input_peers.append(await listener.client.get_input_entity(entity))
+                except Exception as err:
+                    failed += 1
+                    self._log(listener, "warn", f"Не удалось подготовить канал {ref}: {err}")
+
+            await self._add_peers_to_folder(listener, input_peers)
+            try:
+                refreshed_folder_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
+                listener.active_channel_ids = self._folder_filter_channel_ids(refreshed_folder_filter)
+            except Exception as err:
+                self._log(listener, "warn", f"Не удалось перечитать состав папки после добавления каналов: {err}")
+
+            saved = 0
+            added = 0
+            for entity in resolved_entities:
+                channel_id = int(getattr(entity, "id", 0) or 0)
+                if channel_id not in listener.active_channel_ids:
+                    failed += 1
+                    self._log(listener, "warn", f"Канал {getattr(entity, 'title', channel_id)} не найден в целевой папке после добавления")
+                    continue
+                profile = await self._read_channel_profile(listener.client, entity, listener)
+                row_id = self.db.upsert_folder_channel(
+                    channel_id=channel_id,
+                    title=profile["title"],
+                    username=profile["username"],
+                    link=profile["link"],
+                    avatar_path=profile["avatar_path"],
+                    subscribers=profile["subscribers"],
+                    avg_views_10=profile["avg_views_10"],
+                    source_channels=[],
+                    account_id=listener.account_id,
+                    folder_id=listener.folder_id,
+                    portal_user_id=listener.portal_user_id,
+                    portal_username=listener.portal_username,
+                )
+                if row_id:
+                    saved += 1
+                    if channel_id not in active_before:
+                        added += 1
+
+            self._log(listener, "success" if saved else "warn", f"Ручные каналы обработаны: сохранено {saved}, новых в папке {added}, ошибок {failed}")
+            return {
+                **self._listener_payload(listener, "running"),
+                "processed": saved,
+                "added": added,
+                "failed": failed,
+            }
 
     def list_channels(
         self,
@@ -879,6 +957,22 @@ class FolderParserService:
                 slug = match.group(1)
                 out[slug] = f"https://t.me/addlist/{slug}"
         return out
+
+    def _extract_channel_refs(self, raw_value: str) -> list[str]:
+        refs: list[str] = []
+        seen: set[str] = set()
+        for match in CHANNEL_REF_RE.finditer(raw_value):
+            raw = (match.group(1) or match.group(2) or "").strip().lstrip("@")
+            if not raw:
+                continue
+            lowered = raw.lower()
+            if lowered in {"addlist", "joinchat", "c"} or lowered.startswith("+"):
+                continue
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            refs.append(raw)
+        return refs
 
     def _channel_payload(self, row: dict) -> dict:
         avatar_path = row.get("avatar_path") or ""

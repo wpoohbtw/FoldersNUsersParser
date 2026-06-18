@@ -753,8 +753,8 @@ const folderUi = {
   getFolders: '\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0438',
   manualAdd: '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0432\u0440\u0443\u0447\u043d\u0443\u044e',
   manualAddTitle: '\u0420\u0443\u0447\u043d\u0430\u044f \u043f\u0430\u043f\u043a\u0430',
-  manualAddSubtitle: '\u0412\u0441\u0442\u0430\u0432\u044c\u0442\u0435 addlist-\u0441\u0441\u044b\u043b\u043a\u0443',
-  manualAddPlaceholder: 'https://t.me/addlist/...',
+  manualAddSubtitle: '\u0412\u0441\u0442\u0430\u0432\u044c\u0442\u0435 addlist-\u0441\u0441\u044b\u043b\u043a\u0443 \u0438\u043b\u0438 \u0441\u043f\u0438\u0441\u043e\u043a \u043a\u0430\u043d\u0430\u043b\u043e\u0432',
+  manualAddPlaceholder: 'https://t.me/addlist/...\nhttps://t.me/channel_one\n@channel_two',
   manualAddFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0443',
   manualAddDuplicate: '\u042d\u0442\u0430 \u043f\u0430\u043f\u043a\u0430 \u0443\u0436\u0435 \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0430. \u0425\u043e\u0442\u0438\u0442\u0435 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0441\u0442\u0430\u0442\u0443?',
   yes: '\u0414\u0430',
@@ -1557,7 +1557,7 @@ function ManualFolderModal({
         <div className="manualFolderBody">
           <label className="fieldBlock">
             <span>{folderUi.manualAddSubtitle}</span>
-            <input value={linkUrl} onChange={(event) => { setLinkUrl(event.target.value); if (duplicateMessage) onDuplicateClear(); }} placeholder={folderUi.manualAddPlaceholder} autoFocus />
+            <textarea value={linkUrl} onChange={(event) => { setLinkUrl(event.target.value); if (duplicateMessage) onDuplicateClear(); }} placeholder={folderUi.manualAddPlaceholder} autoFocus />
           </label>
           {duplicateMessage && <div className="manualFolderConfirm"><p>{duplicateMessage}</p><div><button className="ghostButton" type="button" onClick={onClose} disabled={isSubmitting}>{folderUi.no}</button><button className="primaryButton" type="button" onClick={() => void submitManualFolder(true)} disabled={isSubmitting}>{isSubmitting ? <Loader2 className="spinIcon" size={16} /> : <RefreshCw size={16} />}{folderUi.yes}</button></div></div>}
           {error && <div className="folderInlineError">{error}</div>}
