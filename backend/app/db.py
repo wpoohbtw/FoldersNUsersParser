@@ -981,17 +981,20 @@ class Database:
         self.conn.execute(f"DELETE FROM folder_parser_logs WHERE {where}", tuple(args))
         self.conn.commit()
 
-    def is_folder_link_processed(self, slug: str, portal_user_id: str = "", portal_username: str = "") -> bool:
+    def get_folder_link_status(self, slug: str, portal_user_id: str = "", portal_username: str = "") -> str:
         where, args = self._owner_where(portal_user_id, portal_username)
         row = self.conn.execute(
             f"""
-            SELECT id FROM processed_folder_links
+            SELECT status FROM processed_folder_links
             WHERE addlist_slug = ? AND {where}
             LIMIT 1
             """,
             (slug, *args),
         ).fetchone()
-        return row is not None
+        return str(row["status"] or "") if row else ""
+
+    def is_folder_link_processed(self, slug: str, portal_user_id: str = "", portal_username: str = "") -> bool:
+        return bool(self.get_folder_link_status(slug, portal_user_id, portal_username))
 
     def start_folder_link_processing(
         self,
@@ -1000,6 +1003,7 @@ class Database:
         first_channel_id: int | None = None,
         portal_user_id: str = "",
         portal_username: str = "",
+        force: bool = False,
     ) -> bool:
         now = _utc_now()
         try:
@@ -1024,7 +1028,7 @@ class Database:
                 """,
                 (slug, *args),
             ).fetchone()
-            if row and str(row["status"] or "") in {"failed", "partial"}:
+            if row and (force or str(row["status"] or "") in {"failed", "partial"}):
                 self.conn.execute(
                     f"""
                     UPDATE processed_folder_links

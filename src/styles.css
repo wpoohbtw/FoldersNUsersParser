@@ -1172,6 +1172,27 @@ button:disabled {
   box-shadow: 0 0 22px rgba(0, 216, 255, 0.12);
 }
 
+.manualFolderConfirm {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(255, 211, 106, 0.28);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(65, 47, 10, 0.34);
+  color: #ffe7ad;
+}
+
+.manualFolderConfirm p {
+  margin: 0;
+  font-weight: 700;
+}
+
+.manualFolderConfirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .accessList {
   display: grid;
   max-height: 290px;

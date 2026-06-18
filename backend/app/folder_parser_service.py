@@ -400,7 +400,7 @@ class FolderParserService:
                 return self._listener_payload(listener, "running")
         return {"status": "idle", "channels": 0}
 
-    async def process_manual_addlist(self, link_url: str, portal_user_id: str = "", portal_username: str = "") -> dict:
+    async def process_manual_addlist(self, link_url: str, portal_user_id: str = "", portal_username: str = "", force: bool = False) -> dict:
         value = link_url.strip()
         match = ADDLIST_RE.search(value)
         if not match:
@@ -413,8 +413,14 @@ class FolderParserService:
 
         slug = match.group(1)
         normalized_url = f"https://t.me/addlist/{slug}"
+        if not force and self.db.get_folder_link_status(slug, portal_user_id, portal_username) == "done":
+            return {
+                **self._listener_payload(listener, "running"),
+                "duplicate": True,
+                "message": "Эта папка уже добавлена. Хотите обновить статистику?",
+            }
         self._log(listener, "info", "Папка добавлена вручную", event_type="folder-found")
-        await self._process_addlist_link(listener, slug, normalized_url, 0, "Ручное добавление", "")
+        await self._process_addlist_link(listener, slug, normalized_url, 0, "Ручное добавление", "", force=force)
         return self._listener_payload(listener, "running")
 
     def list_channels(
@@ -522,6 +528,7 @@ class FolderParserService:
         source_channel_id: int,
         source_title: str,
         source_url: str,
+        force: bool = False,
     ) -> None:
         async with listener.lock:
             if not self.db.start_folder_link_processing(
@@ -530,6 +537,7 @@ class FolderParserService:
                 first_channel_id=source_channel_id,
                 portal_user_id=listener.portal_user_id,
                 portal_username=listener.portal_username,
+                force=force,
             ):
                 self._log(listener, "warn", "Повторная папка пропущена")
                 return
@@ -571,6 +579,11 @@ class FolderParserService:
 
                 folder_sources = await self._folder_source_channels(listener, invite_channels)
                 active_before_update = set(listener.active_channel_ids)
+                try:
+                    refreshed_folder_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
+                    listener.active_channel_ids = self._folder_filter_channel_ids(refreshed_folder_filter)
+                except Exception as err:
+                    self._log(listener, "warn", f"Не удалось перечитать состав папки после добавления: {err}")
                 added = 0
                 for entity in invite_channels:
                     entity_id = int(getattr(entity, "id"))
@@ -590,14 +603,14 @@ class FolderParserService:
                         portal_user_id=listener.portal_user_id,
                         portal_username=listener.portal_username,
                     )
-                    if row_id and entity_id in added_to_folder_ids and entity_id not in active_before_update:
-                        listener.active_channel_ids.add(entity_id)
+                    if row_id and is_active_or_added and entity_id not in active_before_update:
                         added += 1
 
                 if joined_chatlist_ids:
                     await self._cleanup_joined_chatlists(listener, joined_chatlist_ids, input_peers)
 
-                processing_status = "done" if len(added_to_folder_ids) >= len(input_peers) else "partial"
+                expected_new_ids = {int(getattr(entity, "id", 0) or 0) for entity in new_entities}
+                processing_status = "done" if expected_new_ids <= listener.active_channel_ids else "partial"
                 self.db.finish_folder_link_processing(
                     slug,
                     channels_count=len(invite_channels),

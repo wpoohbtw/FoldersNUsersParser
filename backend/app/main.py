@@ -76,6 +76,7 @@ class FolderListenerRequest(BaseModel):
 
 class ManualFolderAddRequest(BaseModel):
     link_url: str
+    force: bool = False
 
 
 class TelegramBotConfigRequest(BaseModel):
@@ -246,6 +247,7 @@ async def manual_add_folder(payload: ManualFolderAddRequest, portal_user: Portal
             payload.link_url,
             portal_user_id=portal_user.user_id,
             portal_username=portal_user.username,
+            force=payload.force,
         )
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err

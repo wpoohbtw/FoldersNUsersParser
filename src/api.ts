@@ -120,6 +120,8 @@ export type FolderListenerStatus = {
   folder_id?: string;
   folder_title?: string;
   channels: number;
+  duplicate?: boolean;
+  message?: string;
 };
 
 export type FolderLog = {
@@ -257,10 +259,10 @@ export const api = {
       body: JSON.stringify({ account_id: accountId, folder_id: folderId }),
     });
   },
-  async manualAddFolder(linkUrl: string) {
+  async manualAddFolder(linkUrl: string, force = false) {
     return request<FolderListenerStatus>('/api/v1/folders/listener/manual-add', {
       method: 'POST',
-      body: JSON.stringify({ link_url: linkUrl }),
+      body: JSON.stringify({ link_url: linkUrl, force }),
     });
   },
   async listFolderChannels(accountId?: number, folderId?: string) {
