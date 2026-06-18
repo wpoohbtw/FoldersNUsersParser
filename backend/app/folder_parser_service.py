@@ -783,8 +783,9 @@ class FolderParserService:
         if not input_peers:
             return set()
         folder_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
-        include_peers = list(getattr(folder_filter, "include_peers", []) or [])
-        exclude_peers = list(getattr(folder_filter, "exclude_peers", []) or [])
+        include_peers = await self._normalize_filter_input_peers(listener.client, list(getattr(folder_filter, "include_peers", []) or []))
+        pinned_peers = await self._normalize_filter_input_peers(listener.client, list(getattr(folder_filter, "pinned_peers", []) or []))
+        exclude_peers = await self._normalize_filter_input_peers(listener.client, list(getattr(folder_filter, "exclude_peers", []) or []))
         existing_ids = {self._input_peer_channel_id(peer) for peer in include_peers}
         target_ids = {self._input_peer_channel_id(peer) for peer in input_peers if self._input_peer_channel_id(peer)}
         added_ids: set[int] = set()
@@ -794,11 +795,11 @@ class FolderParserService:
                 include_peers.append(peer)
                 existing_ids.add(channel_id)
                 added_ids.add(channel_id)
-        folder_filter.include_peers = include_peers
         if target_ids:
-            folder_filter.exclude_peers = [peer for peer in exclude_peers if self._peer_channel_id(peer) not in target_ids]
+            exclude_peers = [peer for peer in exclude_peers if self._peer_channel_id(peer) not in target_ids]
+        updated_filter = self._clone_folder_filter(folder_filter, include_peers, pinned_peers, exclude_peers)
         try:
-            await listener.client(UpdateDialogFilterRequest(int(listener.folder_id), folder_filter))
+            await listener.client(UpdateDialogFilterRequest(int(listener.folder_id), updated_filter))
         except Exception as err:
             self._log(listener, "warn", f"Не удалось обновить слушаемую папку: {err}")
             return set()
@@ -809,7 +810,61 @@ class FolderParserService:
         except Exception as err:
             self._log(listener, "warn", f"Не удалось проверить обновление слушаемой папки: {err}")
             return set()
+        self._log(listener, "system", f"Проверка добавления в папку: закреплено {len(target_ids & verified_ids)} из {len(target_ids)}")
         return target_ids & verified_ids
+
+    async def _normalize_filter_input_peers(self, client: TelegramClient, peers: list[Any]) -> list[Any]:
+        normalized = []
+        seen: set[int] = set()
+        for peer in peers:
+            try:
+                input_peer = await client.get_input_entity(peer)
+            except Exception:
+                input_peer = peer
+            channel_id = self._input_peer_channel_id(input_peer) or self._peer_channel_id(input_peer)
+            if channel_id and channel_id in seen:
+                continue
+            if channel_id:
+                seen.add(channel_id)
+            normalized.append(input_peer)
+        return normalized
+
+    def _clone_folder_filter(
+        self,
+        folder_filter: DialogFilter | DialogFilterChatlist,
+        include_peers: list[Any],
+        pinned_peers: list[Any],
+        exclude_peers: list[Any],
+    ) -> DialogFilter | DialogFilterChatlist:
+        if isinstance(folder_filter, DialogFilterChatlist):
+            return DialogFilterChatlist(
+                id=int(getattr(folder_filter, "id")),
+                title=getattr(folder_filter, "title"),
+                pinned_peers=pinned_peers,
+                include_peers=include_peers,
+                has_my_invites=getattr(folder_filter, "has_my_invites", None),
+                title_noanimate=getattr(folder_filter, "title_noanimate", None),
+                emoticon=getattr(folder_filter, "emoticon", None),
+                color=getattr(folder_filter, "color", None),
+            )
+        return DialogFilter(
+            id=int(getattr(folder_filter, "id")),
+            title=getattr(folder_filter, "title"),
+            pinned_peers=pinned_peers,
+            include_peers=include_peers,
+            exclude_peers=exclude_peers,
+            contacts=getattr(folder_filter, "contacts", None),
+            non_contacts=getattr(folder_filter, "non_contacts", None),
+            groups=getattr(folder_filter, "groups", None),
+            broadcasts=getattr(folder_filter, "broadcasts", None),
+            bots=getattr(folder_filter, "bots", None),
+            exclude_muted=getattr(folder_filter, "exclude_muted", None),
+            exclude_read=getattr(folder_filter, "exclude_read", None),
+            exclude_archived=getattr(folder_filter, "exclude_archived", None),
+            title_noanimate=getattr(folder_filter, "title_noanimate", None),
+            emoticon=getattr(folder_filter, "emoticon", None),
+            color=getattr(folder_filter, "color", None),
+        )
 
     def _folder_filter_channel_ids(self, folder_filter: DialogFilter | DialogFilterChatlist) -> set[int]:
         include_peers = list(getattr(folder_filter, "include_peers", []) or [])
