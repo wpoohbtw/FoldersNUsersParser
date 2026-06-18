@@ -18,6 +18,9 @@ from .db import Database
 
 
 ADDLIST_RE = re.compile(r"https?://t\.me/addlist/([A-Za-z0-9_-]+)", re.IGNORECASE)
+LISTENER_RECONNECT_DELAY_SECONDS = 10
+LISTENER_HEARTBEAT_SECONDS = 60
+LISTENER_HEARTBEAT_TIMEOUT_SECONDS = 30
 
 
 @dataclass(slots=True)
@@ -34,6 +37,8 @@ class ActiveFolderListener:
     active_channel_ids: set[int] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     sync_task: asyncio.Task | None = None
+    heartbeat_task: asyncio.Task | None = None
+    is_stopping: bool = False
 
 
 class FolderParserService:
@@ -234,11 +239,15 @@ class FolderParserService:
                 folder_id=str(folder_id),
                 folder_title=folder_title,
                 client=client,
-                task=asyncio.create_task(client.run_until_disconnected()),
+                task=asyncio.create_task(asyncio.sleep(0)),
             )
+            if not listener.task.done():
+                listener.task.cancel()
             listener.active_channel_ids = self._folder_filter_channel_ids(folder_filter)
             client.add_event_handler(self._make_message_handler(listener), events.NewMessage())
             self._listeners[key] = listener
+            listener.task = self._track_background_task(self._run_listener_connection(listener))
+            listener.heartbeat_task = self._track_background_task(self._watch_listener_heartbeat(listener))
             listener.sync_task = self._track_background_task(self._finish_listener_start(listener, folder_filter))
 
         self._log(
@@ -268,12 +277,51 @@ class FolderParserService:
         except Exception as err:
             self._log(listener, "warn", f"Ошибка первичной синхронизации слушателя: {err}", event_type="parser-error")
 
+    async def _run_listener_connection(self, listener: ActiveFolderListener) -> None:
+        while not listener.is_stopping:
+            try:
+                if not listener.client.is_connected():
+                    await listener.client.connect()
+                    await listener.client.catch_up()
+                await listener.client.run_until_disconnected()
+                if not listener.is_stopping:
+                    self._log(listener, "warn", "Соединение с Telegram прервано, переподключаюсь", event_type="parser-error")
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                if not listener.is_stopping:
+                    self._log(listener, "warn", f"Слушатель Telegram отвалился: {err}. Переподключаюсь", event_type="parser-error")
+
+            if not listener.is_stopping:
+                await asyncio.sleep(LISTENER_RECONNECT_DELAY_SECONDS)
+
+    async def _watch_listener_heartbeat(self, listener: ActiveFolderListener) -> None:
+        while not listener.is_stopping:
+            await asyncio.sleep(LISTENER_HEARTBEAT_SECONDS)
+            if listener.is_stopping:
+                return
+            try:
+                if not listener.client.is_connected():
+                    raise ConnectionError("Telegram client disconnected")
+                await asyncio.wait_for(listener.client.get_me(), timeout=LISTENER_HEARTBEAT_TIMEOUT_SECONDS)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                if listener.is_stopping:
+                    return
+                self._log(listener, "warn", f"Heartbeat слушателя не прошел: {err}. Переподключаюсь", event_type="parser-error")
+                try:
+                    await listener.client.disconnect()
+                except Exception:
+                    pass
+
     async def stop_listener(self, account_id: int, folder_id: str, portal_user_id: str = "", portal_username: str = "") -> dict:
         key = self._listener_key(portal_user_id, portal_username, int(account_id), str(folder_id))
         async with self._lock:
             listener = self._listeners.pop(key, None)
 
         if listener:
+            listener.is_stopping = True
             self._log(listener, "warn", "Парсер остановлен", event_type="parser-stopped")
             self.db.set_folder_listener_status(
                 listener.account_id,
@@ -285,6 +333,8 @@ class FolderParserService:
             await listener.client.disconnect()
             if listener.sync_task and not listener.sync_task.done():
                 listener.sync_task.cancel()
+            if listener.heartbeat_task and not listener.heartbeat_task.done():
+                listener.heartbeat_task.cancel()
             listener.task.cancel()
             return self._listener_payload(listener, "idle")
 
@@ -301,12 +351,15 @@ class FolderParserService:
         listeners = list(self._listeners.values())
         self._listeners.clear()
         for listener in listeners:
+            listener.is_stopping = True
             try:
                 await listener.client.disconnect()
             except Exception:
                 pass
             if listener.sync_task and not listener.sync_task.done():
                 listener.sync_task.cancel()
+            if listener.heartbeat_task and not listener.heartbeat_task.done():
+                listener.heartbeat_task.cancel()
             listener.task.cancel()
         for task in list(self._background_tasks):
             task.cancel()
