@@ -49,7 +49,7 @@ class FolderParserService:
         self._listeners: dict[str, ActiveFolderListener] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
-        self.on_folder_added: Callable[[str, str, str, str, int], Awaitable[None]] | None = None
+        self.on_folder_added: Callable[[str, str, str, str, int], Awaitable[bool]] | None = None
 
     def _track_background_task(self, coro: Any) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -244,7 +244,7 @@ class FolderParserService:
             )
             if not listener.task.done():
                 listener.task.cancel()
-            listener.active_channel_ids = self._folder_filter_channel_ids(folder_filter)
+            listener.active_channel_ids = self._folder_filter_channel_ids(folder_filter) | self._stored_listener_channel_ids(listener)
             client.add_event_handler(self._make_message_handler(listener), events.NewMessage())
             self._listeners[key] = listener
             listener.task = self._track_background_task(self._run_listener_connection(listener))
@@ -266,7 +266,8 @@ class FolderParserService:
     ) -> None:
         try:
             async with listener.lock:
-                listener.active_channel_ids = await self._sync_folder_channels(listener, folder_filter, source_channel=None)
+                folder_channel_ids = await self._sync_folder_channels(listener, folder_filter, source_channel=None)
+                listener.active_channel_ids = folder_channel_ids | self._stored_listener_channel_ids(listener)
                 await listener.client.catch_up()
             self._log(
                 listener,
@@ -449,7 +450,6 @@ class FolderParserService:
             self._log(listener, "info", f"Ручное добавление каналов: {len(refs)}")
             active_before = set(listener.active_channel_ids)
             resolved_entities: list[Any] = []
-            input_peers: list[Any] = []
             prepared_channel_ids: set[int] = set()
             failed = 0
 
@@ -466,19 +466,11 @@ class FolderParserService:
                         except UserAlreadyParticipantError:
                             pass
                         prepared_channel_ids.add(channel_id)
-                        input_peers.append(await listener.client.get_input_entity(entity))
                     else:
                         prepared_channel_ids.add(channel_id)
                 except Exception as err:
                     failed += 1
                     self._log(listener, "warn", f"Не удалось подготовить канал {ref}: {err}")
-
-            added_to_folder_ids = await self._add_peers_to_folder(listener, input_peers)
-            try:
-                refreshed_folder_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
-                listener.active_channel_ids = self._folder_filter_channel_ids(refreshed_folder_filter)
-            except Exception as err:
-                self._log(listener, "warn", f"Не удалось перечитать состав папки после добавления каналов: {err}")
 
             saved = 0
             added = 0
@@ -486,15 +478,12 @@ class FolderParserService:
                 channel_id = int(getattr(entity, "id", 0) or 0)
                 is_ready = (
                     channel_id in listener.active_channel_ids
-                    or channel_id in added_to_folder_ids
                     or channel_id in prepared_channel_ids
                 )
                 if not is_ready:
                     failed += 1
                     self._log(listener, "warn", f"Канал {getattr(entity, 'title', channel_id)} не подготовлен для сохранения")
                     continue
-                if channel_id not in listener.active_channel_ids:
-                    self._log(listener, "warn", f"Канал {getattr(entity, 'title', channel_id)} не закрепился в папке, сохраняю стату и таблицу после подписки")
                 profile = await self._read_channel_profile(listener.client, entity, listener)
                 row_id = self.db.upsert_folder_channel(
                     channel_id=channel_id,
@@ -512,6 +501,7 @@ class FolderParserService:
                 )
                 if row_id:
                     saved += 1
+                    listener.active_channel_ids.add(channel_id)
                     if channel_id not in active_before:
                         added += 1
 
@@ -644,45 +634,44 @@ class FolderParserService:
 
                 new_entities = [entity for entity in invite_channels if int(getattr(entity, "id", 0) or 0) not in listener.active_channel_ids]
                 input_peers = []
+                prepared_channel_ids: set[int] = set()
                 for entity in new_entities:
                     entity_id = int(getattr(entity, "id", 0) or 0)
                     title = str(getattr(entity, "title", "") or getattr(entity, "username", "") or entity_id)
                     try:
                         await listener.client(JoinChannelRequest(entity))
                     except UserAlreadyParticipantError:
-                        pass
+                        prepared_channel_ids.add(entity_id)
                     except Exception as err:
                         self._log(listener, "warn", f"Не удалось вступить в канал {title}: {err}")
+                    else:
+                        prepared_channel_ids.add(entity_id)
                     try:
                         input_peers.append(await listener.client.get_input_entity(entity))
                     except Exception as err:
-                        self._log(listener, "warn", f"Не удалось подготовить канал {title} для добавления в папку: {err}")
+                        self._log(listener, "warn", f"Не удалось подготовить канал {title} для импорта addlist: {err}")
                 joined_chatlist_ids: set[int] = set()
-                added_to_folder_ids: set[int] = set()
                 if input_peers:
                     before_filter_ids = await self._dialog_filter_ids(listener.client)
                     try:
                         await listener.client(JoinChatlistInviteRequest(slug, peers=input_peers))
                         after_filter_ids = await self._dialog_filter_ids(listener.client)
                         joined_chatlist_ids = after_filter_ids - before_filter_ids
+                        prepared_channel_ids.update(
+                            self._input_peer_channel_id(peer)
+                            for peer in input_peers
+                            if self._input_peer_channel_id(peer)
+                        )
                     except Exception as err:
                         self._log(listener, "warn", f"Не удалось импортировать addlist через Telegram: {err}")
-                    added_to_folder_ids = await self._add_peers_to_folder(listener, input_peers)
-                    if len(added_to_folder_ids) < len(input_peers):
-                        self._log(listener, "warn", f"В слушаемую папку добавлено {len(added_to_folder_ids)} из {len(input_peers)} каналов")
 
                 folder_sources = await self._folder_source_channels(listener, invite_channels)
                 active_before_update = set(listener.active_channel_ids)
-                try:
-                    refreshed_folder_filter = await self._get_folder_filter(listener.client, int(listener.folder_id))
-                    listener.active_channel_ids = self._folder_filter_channel_ids(refreshed_folder_filter)
-                except Exception as err:
-                    self._log(listener, "warn", f"Не удалось перечитать состав папки после добавления: {err}")
                 added = 0
                 for entity in invite_channels:
                     entity_id = int(getattr(entity, "id"))
                     profile = await self._read_channel_profile(listener.client, entity, listener)
-                    is_active_or_added = entity_id in listener.active_channel_ids or entity_id in added_to_folder_ids
+                    is_active_or_added = entity_id in listener.active_channel_ids or entity_id in prepared_channel_ids
                     row_id = self.db.upsert_folder_channel(
                         channel_id=entity_id,
                         title=profile["title"],
@@ -697,8 +686,10 @@ class FolderParserService:
                         portal_user_id=listener.portal_user_id,
                         portal_username=listener.portal_username,
                     )
-                    if row_id and is_active_or_added and entity_id not in active_before_update:
-                        added += 1
+                    if row_id and is_active_or_added:
+                        listener.active_channel_ids.add(entity_id)
+                        if entity_id not in active_before_update:
+                            added += 1
 
                 if joined_chatlist_ids:
                     await self._cleanup_joined_chatlists(listener, joined_chatlist_ids, input_peers)
@@ -714,9 +705,10 @@ class FolderParserService:
                 )
                 if processing_status == "done":
                     self._log(listener, "success", f"{added} каналов добавлено в таблицу", event_type="channels-added")
-                    await self._notify_folder_added(listener, source_title, source_url, added)
                 else:
                     self._log(listener, "warn", f"Папка обработана частично: {added} каналов добавлено, повтор разрешен")
+                if added > 0:
+                    await self._notify_folder_added(listener, source_title, source_url, added)
             except Exception as err:
                 self.db.finish_folder_link_processing(
                     slug,
@@ -775,13 +767,7 @@ class FolderParserService:
                 portal_user_id=listener.portal_user_id,
                 portal_username=listener.portal_username,
             )
-        removed = self.db.unlink_stale_folder_channels(
-            listener.account_id,
-            listener.folder_id,
-            active_ids,
-            portal_user_id=listener.portal_user_id,
-            portal_username=listener.portal_username,
-        )
+        removed = 0
         visible_titles = ", ".join(titles[:10]) or "-"
         self._log(
             listener,
@@ -1080,6 +1066,16 @@ class FolderParserService:
             "channels": len(listener.active_channel_ids),
         }
 
+    def _stored_listener_channel_ids(self, listener: ActiveFolderListener) -> set[int]:
+        rows = self.db.list_folder_channels(
+            account_id=listener.account_id,
+            folder_id=listener.folder_id,
+            include_rejected=True,
+            portal_user_id=listener.portal_user_id,
+            portal_username=listener.portal_username,
+        )
+        return {int(row["channel_id"]) for row in rows if int(row.get("channel_id") or 0) > 0}
+
     def _log(self, listener: ActiveFolderListener, log_type: str, message: str, event_type: str = "") -> None:
         self.db.add_folder_log(
             log_type,
@@ -1092,17 +1088,22 @@ class FolderParserService:
 
     async def _notify_folder_added(self, listener: ActiveFolderListener, source_title: str, source_url: str, added: int) -> None:
         if not self.on_folder_added:
+            self._log(listener, "warn", "Telegram-уведомление не отправлено: бот не подключен к парсеру")
             return
         try:
-            await self.on_folder_added(
+            sent = await self.on_folder_added(
                 listener.portal_user_id,
                 listener.portal_username,
                 source_title,
                 source_url,
                 int(added),
             )
-        except Exception:
-            pass
+            if sent:
+                self._log(listener, "system", "Telegram-уведомление о пойманной папке отправлено")
+            else:
+                self._log(listener, "warn", "Telegram-уведомление не отправлено: запустите бота и нажмите /start")
+        except Exception as err:
+            self._log(listener, "warn", f"Ошибка отправки Telegram-уведомления: {err}")
 
     def _event_channel_id(self, event: events.NewMessage.Event) -> int:
         peer_id = getattr(getattr(event, "message", None), "peer_id", None)

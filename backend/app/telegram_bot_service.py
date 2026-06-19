@@ -132,18 +132,19 @@ class TelegramBotService:
         source_title: str,
         source_url: str,
         channels_added: int,
-    ) -> None:
+    ) -> bool:
         runtime = self._bots.get(self._runtime_key(portal_user_id, portal_username))
         config = self.db.get_telegram_bot_config(portal_user_id, portal_username)
         chat_id = config.get("chat_id")
         if not runtime or not chat_id:
-            return
+            return False
         source = self._html_link(source_title, source_url)
         text = f"Папка поймана в канале {source}.\nКаналов добавлено: <b>{int(channels_added)}</b>."
         try:
             await runtime.bot.send_message(int(chat_id), text, disable_web_page_preview=True)
+            return True
         except Exception:
-            pass
+            return False
 
     def _build_router(self, portal_user_id: str, portal_username: str, allowed_username: str) -> Router:
         router = Router()

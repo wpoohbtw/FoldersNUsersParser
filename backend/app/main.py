@@ -112,8 +112,8 @@ def get_portal_user(
 async def on_startup() -> None:
     db.init()
     folder_parser.on_folder_added = telegram_bot.notify_folder_added
-    await folder_parser.restore_running_listeners()
     await telegram_bot.restore_running_bots()
+    await folder_parser.restore_running_listeners()
 
 
 @app.on_event("shutdown")
