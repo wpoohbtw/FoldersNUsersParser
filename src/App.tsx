@@ -73,6 +73,12 @@ const roleClassNames: Record<AccountRole, string> = {
 type AppPage = 'accounts' | 'chat' | 'folder' | 'channels' | 'telegram';
 type ListenerStatus = 'idle' | 'running';
 type ChannelReviewFilter = 'all' | 'checked' | 'unchecked' | 'rejected';
+type ChannelSortKey = 'subscribers' | 'avg_views' | 'folder' | 'added_at';
+type SortDirection = 'asc' | 'desc';
+type ChannelSortState = {
+  key: ChannelSortKey | null;
+  direction: SortDirection | null;
+};
 type NotificationKind =
   | 'folder-found'
   | 'channels-added'
@@ -887,15 +893,78 @@ function NotificationLayer({ toasts, onClose }: { toasts: SiteToast[]; onClose: 
   );
 }
 
+function getNextChannelSort(current: ChannelSortState, key: ChannelSortKey): ChannelSortState {
+  if (current.key !== key) {
+    return { key, direction: 'desc' };
+  }
+  if (current.direction === 'desc') {
+    return { key, direction: 'asc' };
+  }
+  return { key: null, direction: null };
+}
+
+function getChannelSortValue(channel: ApiFolderChannel, key: ChannelSortKey) {
+  if (key === 'folder') {
+    return channel.source_channels.length;
+  }
+  if (key === 'added_at') {
+    const timestamp = Date.parse(channel.added_at || '');
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+  return Number(channel[key] || 0);
+}
+
+function sortChannels(channels: ApiFolderChannel[], sortState: ChannelSortState) {
+  if (!sortState.key || !sortState.direction) {
+    return channels;
+  }
+  const direction = sortState.direction === 'asc' ? 1 : -1;
+  return channels
+    .map((channel, index) => ({ channel, index }))
+    .sort((left, right) => {
+      const leftValue = getChannelSortValue(left.channel, sortState.key as ChannelSortKey);
+      const rightValue = getChannelSortValue(right.channel, sortState.key as ChannelSortKey);
+      if (leftValue === rightValue) {
+        return left.index - right.index;
+      }
+      return leftValue > rightValue ? direction : -direction;
+    })
+    .map((item) => item.channel);
+}
+
+function SortableChannelHeader({
+  label,
+  sortKey,
+  sortState,
+  onSort,
+}: {
+  label: string;
+  sortKey: ChannelSortKey;
+  sortState: ChannelSortState;
+  onSort: (key: ChannelSortKey) => void;
+}) {
+  const isActive = sortState.key === sortKey && Boolean(sortState.direction);
+  const direction = isActive ? sortState.direction : null;
+
+  return (
+    <button className={`sortableHeaderButton${isActive ? ' isActive' : ''}`} type="button" onClick={() => onSort(sortKey)}>
+      <span>{label}</span>
+      <ChevronDown className={`sortIcon${direction === 'asc' ? ' isAsc' : ''}`} size={14} aria-hidden="true" />
+    </button>
+  );
+}
+
 function FolderChannelsTable({ channels, isLoading }: { channels: ApiFolderChannel[]; isLoading: boolean }) {
   const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState('');
+  const [sortState, setSortState] = useState<ChannelSortState>({ key: null, direction: null });
 
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredChannels = useMemo(
-    () => channels.filter((channel) => channelMatchesSearch(channel, normalizedSearch)),
-    [channels, normalizedSearch],
+    () => sortChannels(channels.filter((channel) => channelMatchesSearch(channel, normalizedSearch)), sortState),
+    [channels, normalizedSearch, sortState],
   );
+  const toggleSort = (key: ChannelSortKey) => setSortState((current) => getNextChannelSort(current, key));
 
   return (
     <section className="folderChannelsPanel">
@@ -915,10 +984,10 @@ function FolderChannelsTable({ channels, isLoading }: { channels: ApiFolderChann
             <thead>
               <tr>
                 <th>{folderUi.channel}</th>
-                <th>{folderUi.subscribers}</th>
-                <th>Avg views</th>
-                <th>{folderUi.folder}</th>
-                <th>{folderUi.addedAt}</th>
+                <th><SortableChannelHeader label={folderUi.subscribers} sortKey="subscribers" sortState={sortState} onSort={toggleSort} /></th>
+                <th><SortableChannelHeader label="Avg views" sortKey="avg_views" sortState={sortState} onSort={toggleSort} /></th>
+                <th><SortableChannelHeader label={folderUi.folder} sortKey="folder" sortState={sortState} onSort={toggleSort} /></th>
+                <th><SortableChannelHeader label={folderUi.addedAt} sortKey="added_at" sortState={sortState} onSort={toggleSort} /></th>
               </tr>
             </thead>
             <tbody>
@@ -1105,6 +1174,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   const [channelsError, setChannelsError] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
+  const [sortState, setSortState] = useState<ChannelSortState>({ key: null, direction: null });
   const selectedTable = channelTables.find((table) => table.id === selectedTableId) || channelTables[0] || null;
 
   async function loadChannelTables() {
@@ -1170,14 +1240,15 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   const normalizedSearch = searchValue.trim().toLowerCase();
   const visibleChannels = useMemo(
     () =>
-      channels.filter((channel) => {
+      sortChannels(channels.filter((channel) => {
         const matchesFilter = (activeFilter === 'all' && channel.check_status !== 'rejected') || (activeFilter !== 'all' && channel.check_status === activeFilter);
         return matchesFilter && channelMatchesSearch(channel, normalizedSearch);
-      }),
-    [activeFilter, channels, normalizedSearch],
+      }), sortState),
+    [activeFilter, channels, normalizedSearch, sortState],
   );
   const visibleChannelIds = useMemo(() => visibleChannels.map((channel) => channel.channel_id), [visibleChannels]);
   const allVisibleSelected = visibleChannelIds.length > 0 && visibleChannelIds.every((channelId) => selectedChannelIds.includes(channelId));
+  const toggleSort = (key: ChannelSortKey) => setSortState((current) => getNextChannelSort(current, key));
 
   function toggleSelectedChannel(channelId: number) {
     setSelectedChannelIds((items) => (items.includes(channelId) ? items.filter((item) => item !== channelId) : [...items, channelId]));
@@ -1314,7 +1385,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
           <div className="animatedTableGradient top" />
           <div className="folderChannelsScroll channelsReviewScroll">
             <table className="folderChannelsTable channelReviewTable">
-              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th>{folderUi.subscribers}</th><th>Avg views</th><th>{folderUi.folder}</th><th>{folderUi.addedAt}</th><th>{folderUi.review}</th></tr></thead>
+              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th><SortableChannelHeader label={folderUi.subscribers} sortKey="subscribers" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label="Avg views" sortKey="avg_views" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.folder} sortKey="folder" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.addedAt} sortKey="added_at" sortState={sortState} onSort={toggleSort} /></th><th>{folderUi.review}</th></tr></thead>
               <tbody>
                 {visibleChannels.length ? visibleChannels.map((channel, index) => {
                   const isExpanded = expandedChannelId === channel.id;

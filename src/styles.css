@@ -1408,6 +1408,40 @@ button:disabled {
   vertical-align: middle;
 }
 
+.sortableHeaderButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sortableHeaderButton:hover,
+.sortableHeaderButton.isActive {
+  color: #73f4ff;
+}
+
+.sortIcon {
+  flex: 0 0 auto;
+  opacity: 0.28;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.sortableHeaderButton.isActive .sortIcon {
+  opacity: 1;
+}
+
+.sortIcon.isAsc {
+  transform: rotate(180deg);
+}
+
 .channelIdentity,
 .sourceChannelItem,
 .sourceToggle {
