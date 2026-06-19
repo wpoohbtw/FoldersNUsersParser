@@ -156,7 +156,7 @@ export type ApiTelegramBotConfig = {
   updated_at: string;
 };
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')).replace(/\/$/, '');
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : import.meta.env.BASE_URL)).replace(/\/$/, '');
 
 function delay(ms: number) {
   return new Promise((resolve) => {
