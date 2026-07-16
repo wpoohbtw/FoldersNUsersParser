@@ -934,15 +934,28 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def list_running_folder_listeners(self) -> list[dict]:
+    def list_recoverable_folder_listeners(self) -> list[dict]:
         rows = self.conn.execute(
             """
             SELECT * FROM folder_listeners
-            WHERE status = 'running'
+            WHERE status IN ('running', 'restoring')
             ORDER BY updated_at DESC, id DESC
             """
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_active_folder_listener(self, portal_user_id: str = "", portal_username: str = "") -> dict | None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        row = self.conn.execute(
+            f"""
+            SELECT * FROM folder_listeners
+            WHERE status IN ('running', 'restoring') AND {where}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            tuple(args),
+        ).fetchone()
+        return dict(row) if row else None
 
     def add_folder_log(
         self,

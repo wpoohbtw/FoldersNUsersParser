@@ -570,6 +570,17 @@ button:disabled {
   box-shadow: 0 0 16px rgba(33, 255, 173, 0.72);
 }
 
+.listenerDot.restoring {
+  background: #ffc15a;
+  box-shadow: 0 0 16px rgba(255, 193, 90, 0.72);
+  animation: listenerPulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes listenerPulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
 .telegramPanel {
   position: relative;
   z-index: 2;

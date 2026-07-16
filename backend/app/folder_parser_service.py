@@ -22,6 +22,8 @@ CHANNEL_REF_RE = re.compile(r"(?:https?://)?(?:t\.me|telegram\.me)/(@?[A-Za-z0-9
 LISTENER_RECONNECT_DELAY_SECONDS = 10
 LISTENER_HEARTBEAT_SECONDS = 60
 LISTENER_HEARTBEAT_TIMEOUT_SECONDS = 30
+LISTENER_RESTORE_INITIAL_DELAY_SECONDS = 10
+LISTENER_RESTORE_MAX_DELAY_SECONDS = 300
 
 
 @dataclass(slots=True)
@@ -48,6 +50,7 @@ class FolderParserService:
         self.db = db
         self._listeners: dict[str, ActiveFolderListener] = {}
         self._background_tasks: set[asyncio.Task] = set()
+        self._restore_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
         self.on_folder_added: Callable[[str, str, str, str, int], Awaitable[bool]] | None = None
 
@@ -57,8 +60,20 @@ class FolderParserService:
         task.add_done_callback(self._background_tasks.discard)
         return task
 
+    def _track_listener_restore(self, key: str, coro: Any) -> None:
+        if key in self._restore_tasks:
+            return
+        task = self._track_background_task(coro)
+        self._restore_tasks[key] = task
+
+        def clear_restore_task(completed: asyncio.Task) -> None:
+            if self._restore_tasks.get(key) is completed:
+                self._restore_tasks.pop(key, None)
+
+        task.add_done_callback(clear_restore_task)
+
     async def restore_running_listeners(self) -> None:
-        for row in self.db.list_running_folder_listeners():
+        for row in self.db.list_recoverable_folder_listeners():
             account = self.db.get_account(
                 int(row["account_id"]),
                 portal_user_id=row.get("portal_user_id") or "",
@@ -73,28 +88,95 @@ class FolderParserService:
                     portal_username=row.get("portal_username") or "",
                 )
                 continue
+            portal_user_id = row.get("portal_user_id") or ""
+            portal_username = row.get("portal_username") or ""
+            folder_id = str(row["folder_id"])
+            key = self._listener_key(portal_user_id, portal_username, int(row["account_id"]), folder_id)
+            self.db.set_folder_listener_status(
+                int(row["account_id"]),
+                folder_id,
+                "restoring",
+                portal_user_id=portal_user_id,
+                portal_username=portal_username,
+            )
+            if key not in self._restore_tasks:
+                self._track_listener_restore(key, self._restore_listener_with_retry(account, row))
+
+    async def _restore_listener_with_retry(self, account: dict, row: dict) -> None:
+        portal_user_id = row.get("portal_user_id") or ""
+        portal_username = row.get("portal_username") or ""
+        account_id = int(row["account_id"])
+        folder_id = str(row["folder_id"])
+        listener_id = int(row["id"])
+        attempt = 0
+
+        while self._should_restore_listener(account_id, folder_id, portal_user_id, portal_username):
             try:
                 await self.start_listener(
                     account,
-                    str(row["folder_id"]),
-                    portal_user_id=row.get("portal_user_id") or "",
-                    portal_username=row.get("portal_username") or "",
+                    folder_id,
+                    portal_user_id=portal_user_id,
+                    portal_username=portal_username,
                 )
-            except Exception as err:
+                self.db.add_folder_log(
+                    "system",
+                    "\u041f\u0430\u0440\u0441\u0435\u0440 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d \u043f\u043e\u0441\u043b\u0435 \u0440\u0435\u0441\u0442\u0430\u0440\u0442\u0430",
+                    listener_id=listener_id,
+                    portal_user_id=portal_user_id,
+                    portal_username=portal_username,
+                    event_type="parser-started",
+                )
+                return
+            except asyncio.CancelledError:
+                raise
+            except ValueError as err:
                 self.db.set_folder_listener_status(
-                    int(row["account_id"]),
-                    str(row["folder_id"]),
+                    account_id,
+                    folder_id,
                     "idle",
-                    portal_user_id=row.get("portal_user_id") or "",
-                    portal_username=row.get("portal_username") or "",
+                    portal_user_id=portal_user_id,
+                    portal_username=portal_username,
                 )
                 self.db.add_folder_log(
                     "warn",
-                    f"Не удалось восстановить парсер после рестарта: {err}",
-                    listener_id=int(row["id"]),
-                    portal_user_id=row.get("portal_user_id") or "",
-                    portal_username=row.get("portal_username") or "",
+                    f"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u043f\u0430\u0440\u0441\u0435\u0440 \u043f\u043e\u0441\u043b\u0435 \u0440\u0435\u0441\u0442\u0430\u0440\u0442\u0430: {err}",
+                    listener_id=listener_id,
+                    portal_user_id=portal_user_id,
+                    portal_username=portal_username,
+                    event_type="parser-error",
                 )
+                return
+            except Exception as err:
+                delay = min(
+                    LISTENER_RESTORE_INITIAL_DELAY_SECONDS * (2 ** attempt),
+                    LISTENER_RESTORE_MAX_DELAY_SECONDS,
+                )
+                self.db.set_folder_listener_status(
+                    account_id,
+                    folder_id,
+                    "restoring",
+                    portal_user_id=portal_user_id,
+                    portal_username=portal_username,
+                )
+                self.db.add_folder_log(
+                    "warn",
+                    f"\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0430\u0440\u0441\u0435\u0440\u0430 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c: {err}. \u041d\u043e\u0432\u0430\u044f \u043f\u043e\u043f\u044b\u0442\u043a\u0430 \u0447\u0435\u0440\u0435\u0437 {delay} \u0441.",
+                    listener_id=listener_id,
+                    portal_user_id=portal_user_id,
+                    portal_username=portal_username,
+                    event_type="parser-error",
+                )
+                attempt += 1
+                await asyncio.sleep(delay)
+
+    def _should_restore_listener(self, account_id: int, folder_id: str, portal_user_id: str, portal_username: str) -> bool:
+        row = self.db.get_folder_listener(
+            account_id,
+            folder_id,
+            portal_user_id=portal_user_id,
+            portal_username=portal_username,
+        )
+        return bool(row and row.get("status") in {"running", "restoring"})
 
     async def sync_folder_once(self, account: dict, folder_id: str, portal_user_id: str = "", portal_username: str = "") -> dict:
         self._ensure_api_configured()
@@ -319,6 +401,9 @@ class FolderParserService:
 
     async def stop_listener(self, account_id: int, folder_id: str, portal_user_id: str = "", portal_username: str = "") -> dict:
         key = self._listener_key(portal_user_id, portal_username, int(account_id), str(folder_id))
+        restore_task = self._restore_tasks.pop(key, None)
+        if restore_task and not restore_task.done():
+            restore_task.cancel()
         async with self._lock:
             listener = self._listeners.pop(key, None)
 
@@ -352,6 +437,8 @@ class FolderParserService:
     async def stop_all(self) -> None:
         listeners = list(self._listeners.values())
         self._listeners.clear()
+        restore_tasks = list(self._restore_tasks.values())
+        self._restore_tasks.clear()
         for listener in listeners:
             listener.is_stopping = True
             try:
@@ -363,6 +450,8 @@ class FolderParserService:
             if listener.heartbeat_task and not listener.heartbeat_task.done():
                 listener.heartbeat_task.cancel()
             listener.task.cancel()
+        for task in restore_tasks:
+            task.cancel()
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
@@ -372,22 +461,18 @@ class FolderParserService:
         listener = self._listeners.get(key)
         if listener:
             return self._listener_payload(listener, "running")
+        restore_task = self._restore_tasks.get(key)
+        if restore_task and not restore_task.done():
+            return {"status": "restoring", "channels": 0}
         row = self.db.get_folder_listener(
             account_id,
             folder_id,
             portal_user_id=portal_user_id,
             portal_username=portal_username,
         )
-        if row and row.get("status") == "running":
-            self.db.set_folder_listener_status(
-                account_id,
-                folder_id,
-                "idle",
-                portal_user_id=portal_user_id,
-                portal_username=portal_username,
-            )
+        if row and row.get("status") in {"running", "restoring"}:
             return {
-                "status": "idle",
+                "status": "restoring",
                 "channels": 0,
             }
         return {
@@ -400,6 +485,16 @@ class FolderParserService:
         for key, listener in self._listeners.items():
             if key.startswith(f"{owner_prefix}:"):
                 return self._listener_payload(listener, "running")
+        row = self.db.get_active_folder_listener(portal_user_id=portal_user_id, portal_username=portal_username)
+        if row:
+            return {
+                "status": "restoring",
+                "listener_id": int(row["id"]),
+                "account_id": int(row["account_id"]),
+                "folder_id": str(row["folder_id"]),
+                "folder_title": row.get("folder_title") or "",
+                "channels": 0,
+            }
         return {"status": "idle", "channels": 0}
 
     async def process_manual_addlist(self, link_url: str, portal_user_id: str = "", portal_username: str = "", force: bool = False) -> dict:

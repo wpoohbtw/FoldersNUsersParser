@@ -71,7 +71,7 @@ const roleClassNames: Record<AccountRole, string> = {
 };
 
 type AppPage = 'accounts' | 'chat' | 'folder' | 'channels' | 'telegram';
-type ListenerStatus = 'idle' | 'running';
+type ListenerStatus = 'idle' | 'running' | 'restoring';
 type ChannelReviewFilter = 'all' | 'checked' | 'unchecked' | 'rejected';
 type ChannelSortKey = 'subscribers' | 'avg_views' | 'folder' | 'added_at';
 type SortDirection = 'asc' | 'desc';
@@ -111,6 +111,12 @@ const NOTIFICATION_TITLES: Record<NotificationKind, string> = {
   'parser-started': 'Парсер запущен',
   'parser-stopped': 'Парсер остановлен',
 };
+
+function toListenerStatus(status: string): ListenerStatus {
+  return status === 'running' || status === 'restoring' ? status : 'idle';
+}
+
+const LISTENER_RESTORING_LABEL = '\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u0430\u0432\u043b\u0438\u0432\u0430\u0435\u0442\u0441\u044f';
 
 function getPortalStorageUser(currentUser: PortalUser | null, accounts: ApiAccount[] = []) {
   if (currentUser?.portal_user_id) {
@@ -1673,7 +1679,7 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
   async function loadListenerStatus(accountId: number, folderId: string) {
     if (!accountId || !folderId) { setStatus('idle'); return; }
     const payload = await api.getFolderListenerStatus(accountId, folderId);
-    setStatus(payload.status === 'running' ? 'running' : 'idle');
+    setStatus(toListenerStatus(payload.status));
   }
   async function loadRuntimeState(accountId: number, folderId: string) {
     setFolderError('');
@@ -1684,10 +1690,10 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
     if (!accounts.length) return;
     api.getActiveFolderListener()
       .then((payload) => {
-        if (payload.status === 'running' && payload.account_id && payload.folder_id) {
+        if ((payload.status === 'running' || payload.status === 'restoring') && payload.account_id && payload.folder_id) {
           setSelectedAccountId(String(payload.account_id));
           setSelectedFolderId(String(payload.folder_id));
-          setStatus('running');
+          setStatus(toListenerStatus(payload.status));
         }
       })
       .catch(() => undefined);
@@ -1706,7 +1712,7 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
     void loadRuntimeState(accountId, selectedFolderId);
   }, [selectedAccountId, selectedFolderId]);
   useEffect(() => {
-    if (status !== 'running') return undefined;
+    if (status === 'idle') return undefined;
     const timer = window.setInterval(() => { const accountId = Number(selectedAccountId); if (accountId && selectedFolderId) void Promise.all([loadListenerStatus(accountId, selectedFolderId), loadFolderChannels(accountId, selectedFolderId), loadFolderLogs()]).catch(() => undefined); }, 3500);
     return () => window.clearInterval(timer);
   }, [selectedAccountId, selectedFolderId, status]);
@@ -1733,7 +1739,7 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
     if (!accountId || !selectedFolderId) return;
     setOpenDropdown(null); setFolderError(''); setIsTogglingListener(true);
     try {
-      if (status !== 'running') {
+      if (status === 'idle') {
         const foldersPayload = await api.refreshAccountFolders(accountId);
         setFolders(foldersPayload.items);
         if (!foldersPayload.items.some((folderItem) => folderItem.id === selectedFolderId)) {
@@ -1745,8 +1751,8 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
           return;
         }
       }
-      const payload = status === 'running' ? await api.stopFolderListener(accountId, selectedFolderId) : await api.startFolderListener(accountId, selectedFolderId);
-      setStatus(payload.status === 'running' ? 'running' : 'idle');
+      const payload = status === 'idle' ? await api.startFolderListener(accountId, selectedFolderId) : await api.stopFolderListener(accountId, selectedFolderId);
+      setStatus(toListenerStatus(payload.status));
       await Promise.all([loadFolderChannels(accountId, selectedFolderId), loadFolderLogs()]);
     } catch (err) { setFolderError(err instanceof Error ? err.message : folderUi.toggleFailed); } finally { setIsTogglingListener(false); }
   }
@@ -1759,7 +1765,7 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
     setIsManualAdding(true);
     try {
       const payload = await api.manualAddFolder(linkUrl, force);
-      setStatus(payload.status === 'running' ? 'running' : 'idle');
+      setStatus(toListenerStatus(payload.status));
       if (payload.duplicate) {
         setManualDuplicateMessage(payload.message || folderUi.manualAddDuplicate);
         return;
@@ -1782,10 +1788,10 @@ function FoldersPage({ accounts, portalUser }: { accounts: ApiAccount[]; portalU
       <section className="folderControlPanel">
         <header className="panelHeader folderPanelHeader"><div><h2>{folderUi.listener}</h2></div></header>
         <div className="folderControls">
-          <div className="fieldBlock"><span>{folderUi.account}</span><div className={`customSelect accountSelect${openDropdown === 'account' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'account' ? null : 'account'))} disabled={!accounts.length || status === 'running'}>{selectedAccount ? <span className="selectAccountValue"><Avatar item={selectedAccount} /><span><strong>{getDisplayName(selectedAccount)}</strong><em>{selectedAccount.username || '@unknown'}</em></span></span> : <span className="selectPlaceholder">{folderUi.noAccounts}</span>}<ChevronDown size={16} /></button>{openDropdown === 'account' && <div className="customSelectMenu">{accounts.length ? accounts.map((account) => <button className={`customSelectOption accountOption${String(account.account_id) === selectedAccountId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedAccountId(String(account.account_id)); setFolderError(''); setStatus('idle'); setOpenDropdown(null); }} key={account.account_id}><Avatar item={account} /><span><strong>{getDisplayName(account)}</strong><em>{account.username || '@unknown'}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noAccounts}</span>}</div>}</div></div>
-          <button className="iconButton folderFetchButton" type="button" onClick={fetchFolders} disabled={!selectedAccountId || isFetchingFolders || status === 'running'} title={folderUi.getFolders} aria-label={folderUi.getFolders}>{isFetchingFolders ? <Loader2 className="spinIcon" size={17} /> : <RefreshCw size={17} />}</button>
-          <div className="fieldBlock"><span>{folderUi.folder}</span><div className={`customSelect${openDropdown === 'folder' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'folder' ? null : 'folder'))} disabled={status === 'running'}><span className="selectFolderValue">{selectedFolder?.title || (folders.length ? folderUi.noFolderSelected : folderUi.noFolders)}</span><ChevronDown size={16} /></button>{openDropdown === 'folder' && <div className="customSelectMenu">{folders.length ? folders.map((folderItem) => <button className={`customSelectOption folderOption${folderItem.id === selectedFolderId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedFolderId(folderItem.id); setOpenDropdown(null); }} key={folderItem.id}><FolderOpen size={17} /><span><strong>{folderItem.title}</strong><em>{folderItem.channels} {folderUi.channelsCount}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noFolders}</span>}</div>}</div></div>
-          <div className="folderRunBar"><button className="iconButton manualFolderButton" type="button" onClick={() => { setManualAddError(''); setManualDuplicateMessage(''); setIsManualModalOpen(true); }} disabled={status !== 'running' || isManualAdding} title={folderUi.manualAdd} aria-label={folderUi.manualAdd}>{isManualAdding ? <Loader2 className="spinIcon" size={16} /> : <Link2 size={16} />}</button><button className="primaryButton" type="button" onClick={() => void toggleListening()} disabled={!selectedAccountId || !selectedFolderId || isTogglingListener}>{isTogglingListener ? <Loader2 className="spinIcon" size={16} /> : status === 'running' ? <Square size={16} /> : <Play size={16} />}{status === 'running' ? folderUi.stop : folderUi.start}</button><span className={`listenerDot ${status}`} title={status === 'running' ? folderUi.started : folderUi.stopped} aria-label={status === 'running' ? folderUi.started : folderUi.stopped} /></div>
+          <div className="fieldBlock"><span>{folderUi.account}</span><div className={`customSelect accountSelect${openDropdown === 'account' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'account' ? null : 'account'))} disabled={!accounts.length || status !== 'idle'}>{selectedAccount ? <span className="selectAccountValue"><Avatar item={selectedAccount} /><span><strong>{getDisplayName(selectedAccount)}</strong><em>{selectedAccount.username || '@unknown'}</em></span></span> : <span className="selectPlaceholder">{folderUi.noAccounts}</span>}<ChevronDown size={16} /></button>{openDropdown === 'account' && <div className="customSelectMenu">{accounts.length ? accounts.map((account) => <button className={`customSelectOption accountOption${String(account.account_id) === selectedAccountId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedAccountId(String(account.account_id)); setFolderError(''); setStatus('idle'); setOpenDropdown(null); }} key={account.account_id}><Avatar item={account} /><span><strong>{getDisplayName(account)}</strong><em>{account.username || '@unknown'}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noAccounts}</span>}</div>}</div></div>
+          <button className="iconButton folderFetchButton" type="button" onClick={fetchFolders} disabled={!selectedAccountId || isFetchingFolders || status !== 'idle'} title={folderUi.getFolders} aria-label={folderUi.getFolders}>{isFetchingFolders ? <Loader2 className="spinIcon" size={17} /> : <RefreshCw size={17} />}</button>
+          <div className="fieldBlock"><span>{folderUi.folder}</span><div className={`customSelect${openDropdown === 'folder' ? ' isOpen' : ''}`}><button className="customSelectButton" type="button" onClick={() => setOpenDropdown((value) => (value === 'folder' ? null : 'folder'))} disabled={status !== 'idle'}><span className="selectFolderValue">{selectedFolder?.title || (folders.length ? folderUi.noFolderSelected : folderUi.noFolders)}</span><ChevronDown size={16} /></button>{openDropdown === 'folder' && <div className="customSelectMenu">{folders.length ? folders.map((folderItem) => <button className={`customSelectOption folderOption${folderItem.id === selectedFolderId ? ' isSelected' : ''}`} type="button" onClick={() => { setSelectedFolderId(folderItem.id); setOpenDropdown(null); }} key={folderItem.id}><FolderOpen size={17} /><span><strong>{folderItem.title}</strong><em>{folderItem.channels} {folderUi.channelsCount}</em></span></button>) : <span className="customSelectEmpty">{folderUi.noFolders}</span>}</div>}</div></div>
+          <div className="folderRunBar"><button className="iconButton manualFolderButton" type="button" onClick={() => { setManualAddError(''); setManualDuplicateMessage(''); setIsManualModalOpen(true); }} disabled={status !== 'running' || isManualAdding} title={folderUi.manualAdd} aria-label={folderUi.manualAdd}>{isManualAdding ? <Loader2 className="spinIcon" size={16} /> : <Link2 size={16} />}</button><button className="primaryButton" type="button" onClick={() => void toggleListening()} disabled={!selectedAccountId || !selectedFolderId || isTogglingListener}>{isTogglingListener || status === 'restoring' ? <Loader2 className="spinIcon" size={16} /> : status === 'running' ? <Square size={16} /> : <Play size={16} />}{status === 'idle' ? folderUi.start : folderUi.stop}</button><span className={`listenerDot ${status}`} title={status === 'running' ? folderUi.started : status === 'restoring' ? LISTENER_RESTORING_LABEL : folderUi.stopped} aria-label={status === 'running' ? folderUi.started : status === 'restoring' ? LISTENER_RESTORING_LABEL : folderUi.stopped} /></div>
         </div>
         {folderError && <div className="folderInlineError">{folderError}</div>}
       </section>

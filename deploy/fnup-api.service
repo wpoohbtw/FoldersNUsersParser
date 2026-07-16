@@ -1,6 +1,7 @@
 [Unit]
 Description=FoldersNUsersParser FastAPI backend
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -8,7 +9,7 @@ WorkingDirectory=/srv/FoldersNUsersParser
 EnvironmentFile=/srv/FoldersNUsersParser/.env
 ExecStart=/srv/FoldersNUsersParser/.venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8002 --workers 1
 Restart=always
-RestartSec=3
+RestartSec=10
 User=softportal
 Group=softportal
 
