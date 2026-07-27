@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from telethon import TelegramClient, events
-from telethon.errors.rpcerrorlist import UserAlreadyParticipantError
-from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest
+from telethon.errors.rpcerrorlist import UserAlreadyParticipantError, UserNotParticipantError
+from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest, LeaveChannelRequest
 from telethon.tl.functions.chatlists import CheckChatlistInviteRequest, JoinChatlistInviteRequest
 from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
 from telethon.tl.types import DialogFilter, DialogFilterChatlist, MessageEntityTextUrl, MessageEntityUrl
@@ -213,7 +213,8 @@ class FolderParserService:
                 client=client,
                 task=task,
             )
-            active_ids = self._folder_filter_channel_ids(folder_filter)
+            table_id = self.db.ensure_channel_table(portal_user_id, portal_username)
+            active_ids = self._folder_filter_channel_ids(folder_filter) - self.db.list_blacklisted_channel_ids(table_id)
             self._track_background_task(
                 self._sync_folder_once_background(
                     account,
@@ -326,7 +327,11 @@ class FolderParserService:
             )
             if not listener.task.done():
                 listener.task.cancel()
-            listener.active_channel_ids = self._folder_filter_channel_ids(folder_filter) | self._stored_listener_channel_ids(listener)
+            table_id = self.db.ensure_channel_table(portal_user_id, portal_username)
+            blacklisted_ids = self.db.list_blacklisted_channel_ids(table_id)
+            listener.active_channel_ids = (
+                self._folder_filter_channel_ids(folder_filter) - blacklisted_ids
+            ) | self._stored_listener_channel_ids(listener)
             client.add_event_handler(self._make_message_handler(listener), events.NewMessage())
             self._listeners[key] = listener
             listener.task = self._track_background_task(self._run_listener_connection(listener))
@@ -544,6 +549,8 @@ class FolderParserService:
         async with listener.lock:
             self._log(listener, "info", f"Ручное добавление каналов: {len(refs)}")
             active_before = set(listener.active_channel_ids)
+            table_id = self.db.ensure_channel_table(listener.portal_user_id, listener.portal_username)
+            blacklisted_ids = self.db.list_blacklisted_channel_ids(table_id)
             resolved_entities: list[Any] = []
             prepared_channel_ids: set[int] = set()
             failed = 0
@@ -554,6 +561,9 @@ class FolderParserService:
                     channel_id = int(getattr(entity, "id", 0) or 0)
                     if channel_id <= 0 or (not getattr(entity, "broadcast", False) and not getattr(entity, "megagroup", False)):
                         raise ValueError("not a channel")
+                    if channel_id in blacklisted_ids:
+                        self._log(listener, "warn", f"Канал {getattr(entity, 'title', ref)} находится в чёрном списке, пропущен")
+                        continue
                     resolved_entities.append(entity)
                     if channel_id not in listener.active_channel_ids:
                         try:
@@ -672,6 +682,48 @@ class FolderParserService:
             table_id=table_id,
         )
 
+    async def blacklist_channel(self, table_id: int, channel_id: int) -> bool:
+        affected = False
+        for listener in list(self._listeners.values()):
+            listener_table_id = self.db.ensure_channel_table(listener.portal_user_id, listener.portal_username)
+            if int(listener_table_id) != int(table_id):
+                continue
+            affected = True
+            listener.active_channel_ids.discard(int(channel_id))
+            self._track_background_task(self._unsubscribe_blacklisted_channel(listener, int(channel_id), int(table_id)))
+        return affected
+
+    async def _unsubscribe_blacklisted_channel(
+        self,
+        listener: ActiveFolderListener,
+        channel_id: int,
+        table_id: int,
+    ) -> None:
+        async with listener.lock:
+            await self._leave_blacklisted_channel(listener, channel_id, table_id)
+
+    async def _leave_blacklisted_channel(
+        self,
+        listener: ActiveFolderListener,
+        channel_id: int,
+        table_id: int,
+        entity: Any = None,
+    ) -> bool:
+        listener.active_channel_ids.discard(int(channel_id))
+        row = self.db.get_folder_channel(channel_id, table_id) or {}
+        title = str(row.get("title") or getattr(entity, "title", "") or channel_id)
+        reference = entity or row.get("username") or int(channel_id)
+        try:
+            input_channel = await listener.client.get_input_entity(reference)
+            await listener.client(LeaveChannelRequest(input_channel))
+        except UserNotParticipantError:
+            pass
+        except Exception as err:
+            self._log(listener, "warn", f"Канал {title} добавлен в чёрный список, но отписаться не удалось: {err}")
+            return False
+        self._log(listener, "system", f"Канал {title} добавлен в чёрный список, watcher отписан")
+        return True
+
     def _ensure_table_access(self, table_id: int, portal_user_id: str = "", portal_username: str = "") -> dict:
         table = self.db.get_accessible_channel_table(table_id, portal_user_id, portal_username)
         if not table:
@@ -681,6 +733,11 @@ class FolderParserService:
     def _make_message_handler(self, listener: ActiveFolderListener):
         async def handler(event: events.NewMessage.Event) -> None:
             channel_id = self._event_channel_id(event)
+            table_id = self.db.ensure_channel_table(listener.portal_user_id, listener.portal_username)
+            if channel_id and self.db.is_channel_blacklisted(channel_id, table_id):
+                listener.active_channel_ids.discard(channel_id)
+                self._track_background_task(self._unsubscribe_blacklisted_channel(listener, channel_id, table_id))
+                return
 
             links = self._extract_addlist_links(event.message)
             if not links:
@@ -727,7 +784,22 @@ class FolderParserService:
                 self._log(listener, "info", f"Обнаружена папка ({len(invite_channels)} каналов) в канале {source_title}")
                 self._log(listener, "scan", f"Сканирую {len(invite_channels)} каналов")
 
-                new_entities = [entity for entity in invite_channels if int(getattr(entity, "id", 0) or 0) not in listener.active_channel_ids]
+                table_id = self.db.ensure_channel_table(listener.portal_user_id, listener.portal_username)
+                blacklisted_ids = self.db.list_blacklisted_channel_ids(table_id)
+                eligible_channels = [
+                    entity
+                    for entity in invite_channels
+                    if int(getattr(entity, "id", 0) or 0) not in blacklisted_ids
+                ]
+                skipped_blacklisted = len(invite_channels) - len(eligible_channels)
+                if skipped_blacklisted:
+                    self._log(listener, "system", f"Каналов из чёрного списка пропущено: {skipped_blacklisted}")
+
+                new_entities = [
+                    entity
+                    for entity in eligible_channels
+                    if int(getattr(entity, "id", 0) or 0) not in listener.active_channel_ids
+                ]
                 input_peers = []
                 prepared_channel_ids: set[int] = set()
                 for entity in new_entities:
@@ -760,10 +832,10 @@ class FolderParserService:
                     except Exception as err:
                         self._log(listener, "warn", f"Не удалось импортировать addlist через Telegram: {err}")
 
-                folder_sources = await self._folder_source_channels(listener, invite_channels)
+                folder_sources = await self._folder_source_channels(listener, eligible_channels)
                 active_before_update = set(listener.active_channel_ids)
                 added = 0
-                for entity in invite_channels:
+                for entity in eligible_channels:
                     entity_id = int(getattr(entity, "id"))
                     profile = await self._read_channel_profile(listener.client, entity, listener)
                     is_active_or_added = entity_id in listener.active_channel_ids or entity_id in prepared_channel_ids
@@ -789,7 +861,12 @@ class FolderParserService:
                 if joined_chatlist_ids:
                     await self._cleanup_joined_chatlists(listener, joined_chatlist_ids, input_peers)
 
-                expected_new_ids = {int(getattr(entity, "id", 0) or 0) for entity in new_entities}
+                current_blacklist = self.db.list_blacklisted_channel_ids(table_id)
+                expected_new_ids = {
+                    int(getattr(entity, "id", 0) or 0)
+                    for entity in new_entities
+                    if int(getattr(entity, "id", 0) or 0) not in current_blacklist
+                }
                 processing_status = "done" if expected_new_ids <= listener.active_channel_ids else "partial"
                 self.db.finish_folder_link_processing(
                     slug,
@@ -821,6 +898,8 @@ class FolderParserService:
         source_channel: dict | None,
     ) -> set[int]:
         active_ids: set[int] = set()
+        table_id = self.db.ensure_channel_table(listener.portal_user_id, listener.portal_username)
+        blacklisted_ids = self.db.list_blacklisted_channel_ids(table_id)
         include_peers = list(getattr(folder_filter, "include_peers", []) or [])
         pinned_peers = list(getattr(folder_filter, "pinned_peers", []) or [])
         exclude_peers = list(getattr(folder_filter, "exclude_peers", []) or [])
@@ -831,6 +910,7 @@ class FolderParserService:
         }
         seen_ids: set[int] = set()
         titles: list[str] = []
+        skipped_blacklisted = 0
         for peer in [*include_peers, *pinned_peers]:
             peer_channel_id = self._peer_channel_id(peer)
             if peer_channel_id and (peer_channel_id in excluded_ids or peer_channel_id in seen_ids):
@@ -845,6 +925,10 @@ class FolderParserService:
             if not getattr(entity, "broadcast", False) and not getattr(entity, "megagroup", False):
                 continue
             seen_ids.add(channel_id)
+            if channel_id in blacklisted_ids:
+                skipped_blacklisted += 1
+                await self._leave_blacklisted_channel(listener, channel_id, table_id, entity=entity)
+                continue
             active_ids.add(channel_id)
             titles.append(str(getattr(entity, "title", "") or getattr(entity, "username", "") or channel_id))
             profile = await self._read_channel_profile(listener.client, entity, listener)
@@ -867,7 +951,7 @@ class FolderParserService:
         self._log(
             listener,
             "system",
-            f"Синхронизация папки: видно {len(active_ids)}, include {len(include_peers)}, pinned {len(pinned_peers)}, exclude {len(exclude_peers)}, устаревших отвязано {removed}. Каналы: {visible_titles}",
+            f"Синхронизация папки: видно {len(active_ids)}, include {len(include_peers)}, pinned {len(pinned_peers)}, exclude {len(exclude_peers)}, чёрный список {skipped_blacklisted}, устаревших отвязано {removed}. Каналы: {visible_titles}",
         )
         return active_ids
 
@@ -1162,6 +1246,8 @@ class FolderParserService:
         }
 
     def _stored_listener_channel_ids(self, listener: ActiveFolderListener) -> set[int]:
+        table_id = self.db.ensure_channel_table(listener.portal_user_id, listener.portal_username)
+        blacklisted_ids = self.db.list_blacklisted_channel_ids(table_id)
         rows = self.db.list_folder_channels(
             account_id=listener.account_id,
             folder_id=listener.folder_id,
@@ -1169,7 +1255,12 @@ class FolderParserService:
             portal_user_id=listener.portal_user_id,
             portal_username=listener.portal_username,
         )
-        return {int(row["channel_id"]) for row in rows if int(row.get("channel_id") or 0) > 0}
+        return {
+            int(row["channel_id"])
+            for row in rows
+            if int(row.get("channel_id") or 0) > 0
+            and int(row["channel_id"]) not in blacklisted_ids
+        }
 
     def _log(self, listener: ActiveFolderListener, log_type: str, message: str, event_type: str = "") -> None:
         self.db.add_folder_log(

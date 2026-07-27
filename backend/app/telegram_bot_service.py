@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from html import escape
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -30,7 +30,9 @@ class TelegramBotService:
     def __init__(self, db: Database) -> None:
         self.db = db
         self._bots: dict[str, RunningTelegramBot] = {}
+        self._review_selections: dict[str, tuple[int, set[str]]] = {}
         self._lock = asyncio.Lock()
+        self.on_channel_blacklisted: Callable[[int, int], Awaitable[bool]] | None = None
 
     async def restore_running_bots(self) -> None:
         for config in self.db.list_running_telegram_bot_configs():
@@ -97,6 +99,7 @@ class TelegramBotService:
         key = self._runtime_key(portal_user_id, portal_username)
         async with self._lock:
             runtime = self._bots.pop(key, None)
+            self._review_selections.pop(key, None)
         if runtime:
             runtime.task.cancel()
             try:
@@ -155,6 +158,7 @@ class TelegramBotService:
                 denied = await message.answer("Нет доступа.")
                 self._forget_later(message.bot, denied.chat.id, denied.message_id)
                 return
+            self._clear_review_selection(portal_user_id, portal_username)
             text, keyboard = self._main_menu_payload(portal_user_id, portal_username)
             sent = await message.answer(text, reply_markup=keyboard, disable_web_page_preview=True)
             self.db.update_telegram_bot_main_message(
@@ -168,12 +172,14 @@ class TelegramBotService:
         async def handle_refresh(callback: CallbackQuery) -> None:
             if not await self._accept_callback(callback, portal_user_id, portal_username, allowed_username):
                 return
+            self._clear_review_selection(portal_user_id, portal_username)
             await self._edit_main(callback, *self._main_menu_payload(portal_user_id, portal_username))
 
         @router.callback_query(F.data == "menu")
         async def handle_menu(callback: CallbackQuery) -> None:
             if not await self._accept_callback(callback, portal_user_id, portal_username, allowed_username):
                 return
+            self._clear_review_selection(portal_user_id, portal_username)
             self.db.update_telegram_bot_ui_state(None, 0, portal_user_id, portal_username)
             await self._edit_main(callback, *self._main_menu_payload(portal_user_id, portal_username))
 
@@ -182,10 +188,32 @@ class TelegramBotService:
             if not await self._accept_callback(callback, portal_user_id, portal_username, allowed_username):
                 return
             table_id = self._callback_int(callback.data, "table:")
+            self._clear_review_selection(portal_user_id, portal_username)
             self.db.update_telegram_bot_ui_state(table_id, 0, portal_user_id, portal_username)
             await self._edit_main(callback, *self._review_payload(portal_user_id, portal_username, table_id, 0))
 
-        @router.callback_query(F.data.in_({"approve", "reject", "prev", "next"}))
+        @router.callback_query(F.data.startswith("tag:"))
+        async def handle_label(callback: CallbackQuery) -> None:
+            if not await self._accept_callback(callback, portal_user_id, portal_username, allowed_username):
+                return
+            config = self.db.get_telegram_bot_config(portal_user_id, portal_username)
+            table_id = config.get("selected_table_id")
+            if not table_id:
+                await self._edit_main(callback, *self._main_menu_payload(portal_user_id, portal_username))
+                return
+
+            channels = self.db.list_unchecked_channels_for_table(int(table_id), portal_user_id, portal_username)
+            if not channels:
+                await self._edit_main(callback, *self._main_menu_payload(portal_user_id, portal_username))
+                return
+
+            index = min(max(0, int(config.get("selected_index") or 0)), len(channels) - 1)
+            channel_id = int(channels[index]["channel_id"])
+            label = str(callback.data or "").removeprefix("tag:")
+            self._toggle_review_label(portal_user_id, portal_username, channel_id, label)
+            await self._edit_main(callback, *self._review_payload(portal_user_id, portal_username, int(table_id), index))
+
+        @router.callback_query(F.data.in_({"save", "prev", "next"}))
         async def handle_review(callback: CallbackQuery) -> None:
             if not await self._accept_callback(callback, portal_user_id, portal_username, allowed_username):
                 return
@@ -202,18 +230,46 @@ class TelegramBotService:
 
             index = min(max(0, int(config.get("selected_index") or 0)), len(channels) - 1)
             action = str(callback.data or "")
-            if action in {"approve", "reject"}:
-                status = "checked" if action == "approve" else "rejected"
-                self.db.set_folder_channel_review_status(int(channels[index]["channel_id"]), status, int(table_id))
+            channel_id = int(channels[index]["channel_id"])
+            if action == "save":
+                selection = self._get_review_selection(portal_user_id, portal_username, channel_id)
+                if selection:
+                    is_bad = "bad" in selection
+                    self.db.save_folder_channel_labels(
+                        channel_id,
+                        int(table_id),
+                        is_member="member" in selection,
+                        is_sponsor="sponsor" in selection,
+                        is_bad=is_bad,
+                    )
+                    if is_bad and self.on_channel_blacklisted:
+                        try:
+                            await self.on_channel_blacklisted(int(table_id), channel_id)
+                        except Exception:
+                            pass
+                elif index >= len(channels) - 1:
+                    self._clear_review_selection(portal_user_id, portal_username)
+                    self.db.update_telegram_bot_ui_state(None, 0, portal_user_id, portal_username)
+                    await self._edit_main(callback, *self._main_menu_payload(portal_user_id, portal_username))
+                    return
+                else:
+                    index += 1
+                self._clear_review_selection(portal_user_id, portal_username)
                 channels = self.db.list_unchecked_channels_for_table(int(table_id), portal_user_id, portal_username)
                 index = min(index, max(0, len(channels) - 1))
             elif action == "prev":
+                self._clear_review_selection(portal_user_id, portal_username)
                 index = max(0, index - 1)
             elif action == "next":
+                self._clear_review_selection(portal_user_id, portal_username)
                 index = min(len(channels) - 1, index + 1)
 
             self.db.update_telegram_bot_ui_state(int(table_id), index, portal_user_id, portal_username)
             await self._edit_main(callback, *self._review_payload(portal_user_id, portal_username, int(table_id), index))
+
+        @router.callback_query(F.data == "noop")
+        async def handle_noop(callback: CallbackQuery) -> None:
+            await self._accept_callback(callback, portal_user_id, portal_username, allowed_username)
 
         return router
 
@@ -237,19 +293,35 @@ class TelegramBotService:
 
         index = min(max(0, int(index)), len(channels) - 1)
         channel = channels[index]
+        channel_id = int(channel["channel_id"])
+        selection = self._get_review_selection(portal_user_id, portal_username, channel_id)
         title = self._html_link(str(channel.get("title") or "Канал"), str(channel.get("link") or ""))
         subscribers = int(channel.get("subscribers") or 0)
         avg_views = int(channel.get("avg_views_10") or 0)
-        text = f"{title} | пдп: <b>{subscribers}</b> | avg.views: <b>{avg_views}</b>"
+        text = (
+            f"{title} | пдп: <b>{subscribers}</b> | avg.views: <b>{avg_views}</b>\n\n"
+            "Выберите метки и нажмите «Сохранить». Без меток канал будет пропущен."
+        )
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="✅ Подходит", callback_data="approve"),
-                    InlineKeyboardButton(text="❌ Не подходит", callback_data="reject"),
+                    InlineKeyboardButton(
+                        text=f"{'✅ ' if 'member' in selection else ''}Участник",
+                        callback_data="tag:member",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"{'✅ ' if 'sponsor' in selection else ''}$",
+                        callback_data="tag:sponsor",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"{'✅ ' if 'bad' in selection else ''}Хуйня",
+                        callback_data="tag:bad",
+                    ),
                 ],
+                [InlineKeyboardButton(text="💾 Сохранить", callback_data="save")],
                 [
                     InlineKeyboardButton(text="⬅️", callback_data="prev"),
-                    InlineKeyboardButton(text=f"{index + 1}/{len(channels)}", callback_data="refresh"),
+                    InlineKeyboardButton(text=f"{index + 1}/{len(channels)}", callback_data="noop"),
                     InlineKeyboardButton(text="➡️", callback_data="next"),
                 ],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
@@ -306,6 +378,39 @@ class TelegramBotService:
 
     def _runtime_key(self, portal_user_id: str = "", portal_username: str = "") -> str:
         return portal_user_id or f"username:{portal_username}" or "anonymous"
+
+    def _get_review_selection(self, portal_user_id: str, portal_username: str, channel_id: int) -> set[str]:
+        key = self._runtime_key(portal_user_id, portal_username)
+        selected = self._review_selections.get(key)
+        if not selected or selected[0] != int(channel_id):
+            return set()
+        return set(selected[1])
+
+    def _toggle_review_label(
+        self,
+        portal_user_id: str,
+        portal_username: str,
+        channel_id: int,
+        label: str,
+    ) -> set[str]:
+        if label not in {"member", "sponsor", "bad"}:
+            return self._get_review_selection(portal_user_id, portal_username, channel_id)
+
+        key = self._runtime_key(portal_user_id, portal_username)
+        selection = self._get_review_selection(portal_user_id, portal_username, channel_id)
+        if label == "bad":
+            selection = set() if "bad" in selection else {"bad"}
+        else:
+            selection.discard("bad")
+            if label in selection:
+                selection.remove(label)
+            else:
+                selection.add(label)
+        self._review_selections[key] = (int(channel_id), selection)
+        return set(selection)
+
+    def _clear_review_selection(self, portal_user_id: str, portal_username: str) -> None:
+        self._review_selections.pop(self._runtime_key(portal_user_id, portal_username), None)
 
     def _forget_later(self, bot: Bot, chat_id: int, message_id: int) -> None:
         async def cleanup() -> None:

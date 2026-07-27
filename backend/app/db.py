@@ -147,6 +147,8 @@ class Database:
                 source_count INTEGER NOT NULL DEFAULT 0,
                 source_channels_json TEXT,
                 review_status TEXT NOT NULL DEFAULT 'unchecked',
+                is_member INTEGER NOT NULL DEFAULT 0,
+                is_sponsor INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -173,6 +175,20 @@ class Database:
                 portal_username TEXT,
                 role TEXT NOT NULL DEFAULT 'editor',
                 created_at TEXT NOT NULL,
+                FOREIGN KEY(table_id) REFERENCES channel_tables(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS channel_blacklist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                table_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                title TEXT,
+                username TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 FOREIGN KEY(table_id) REFERENCES channel_tables(id) ON DELETE CASCADE
             )
             """
@@ -256,6 +272,8 @@ class Database:
             ("folder_channels", "folder_id", "TEXT"),
             ("folder_channels", "table_id", "INTEGER"),
             ("folder_channels", "review_status", "TEXT NOT NULL DEFAULT 'unchecked'"),
+            ("folder_channels", "is_member", "INTEGER NOT NULL DEFAULT 0"),
+            ("folder_channels", "is_sponsor", "INTEGER NOT NULL DEFAULT 0"),
             ("folder_parser_logs", "event_type", "TEXT"),
             ("processed_folder_links", "status", "TEXT NOT NULL DEFAULT 'processing'"),
             ("telegram_bot_configs", "bot_token", "TEXT"),
@@ -302,6 +320,12 @@ class Database:
             """
             CREATE INDEX IF NOT EXISTS idx_folder_channels_table_channel
             ON folder_channels(table_id, channel_id)
+            """
+        )
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_blacklist_table_channel
+            ON channel_blacklist(table_id, channel_id)
             """
         )
         cur.execute(
@@ -1251,6 +1275,8 @@ class Database:
         table_id: int | None = None,
     ) -> int | None:
         table_id = int(table_id or self.ensure_channel_table(portal_user_id, portal_username))
+        if self.is_channel_blacklisted(channel_id, table_id):
+            return None
         if self.get_folder_channel_review_status(channel_id, table_id) == "rejected":
             return None
 
@@ -1379,15 +1405,145 @@ class Database:
         review_status: str,
         table_id: int,
     ) -> None:
+        if review_status == "unchecked":
+            self.conn.execute(
+                """
+                DELETE FROM channel_blacklist
+                WHERE channel_id = ? AND table_id = ?
+                """,
+                (int(channel_id), int(table_id)),
+            )
         self.conn.execute(
             """
             UPDATE folder_channels
-            SET review_status = ?, updated_at = ?
+            SET review_status = ?,
+                is_member = CASE WHEN ? = 'unchecked' THEN 0 ELSE is_member END,
+                is_sponsor = CASE WHEN ? = 'unchecked' THEN 0 ELSE is_sponsor END,
+                updated_at = ?
             WHERE channel_id = ? AND table_id = ?
             """,
-            (review_status, _utc_now(), int(channel_id), int(table_id)),
+            (
+                review_status,
+                review_status,
+                review_status,
+                _utc_now(),
+                int(channel_id),
+                int(table_id),
+            ),
         )
         self.conn.commit()
+
+    def save_folder_channel_labels(
+        self,
+        channel_id: int,
+        table_id: int,
+        *,
+        is_member: bool,
+        is_sponsor: bool,
+        is_bad: bool,
+    ) -> None:
+        if not is_member and not is_sponsor and not is_bad:
+            raise ValueError("Выберите хотя бы одну метку")
+        if is_bad and (is_member or is_sponsor):
+            raise ValueError("Метка «Хуйня» не совмещается с другими метками")
+
+        row = self.conn.execute(
+            """
+            SELECT title, username
+            FROM folder_channels
+            WHERE channel_id = ? AND table_id = ?
+            LIMIT 1
+            """,
+            (int(channel_id), int(table_id)),
+        ).fetchone()
+        if not row:
+            raise ValueError("Канал не найден")
+
+        now = _utc_now()
+        review_status = "rejected" if is_bad else "checked"
+        self.conn.execute(
+            """
+            UPDATE folder_channels
+            SET review_status = ?,
+                is_member = ?,
+                is_sponsor = ?,
+                updated_at = ?
+            WHERE channel_id = ? AND table_id = ?
+            """,
+            (
+                review_status,
+                1 if is_member else 0,
+                1 if is_sponsor else 0,
+                now,
+                int(channel_id),
+                int(table_id),
+            ),
+        )
+        if is_bad:
+            self.conn.execute(
+                """
+                INSERT INTO channel_blacklist(
+                    table_id, channel_id, title, username, created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(table_id, channel_id) DO UPDATE SET
+                    title = excluded.title,
+                    username = excluded.username,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    int(table_id),
+                    int(channel_id),
+                    row["title"] or "",
+                    row["username"] or "",
+                    now,
+                    now,
+                ),
+            )
+        else:
+            self.conn.execute(
+                """
+                DELETE FROM channel_blacklist
+                WHERE channel_id = ? AND table_id = ?
+                """,
+                (int(channel_id), int(table_id)),
+            )
+        self.conn.commit()
+
+    def is_channel_blacklisted(self, channel_id: int, table_id: int) -> bool:
+        row = self.conn.execute(
+            """
+            SELECT 1
+            FROM channel_blacklist
+            WHERE channel_id = ? AND table_id = ?
+            LIMIT 1
+            """,
+            (int(channel_id), int(table_id)),
+        ).fetchone()
+        return row is not None
+
+    def list_blacklisted_channel_ids(self, table_id: int) -> set[int]:
+        rows = self.conn.execute(
+            """
+            SELECT channel_id
+            FROM channel_blacklist
+            WHERE table_id = ?
+            """,
+            (int(table_id),),
+        ).fetchall()
+        return {int(row["channel_id"]) for row in rows}
+
+    def get_folder_channel(self, channel_id: int, table_id: int) -> dict | None:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM folder_channels
+            WHERE channel_id = ? AND table_id = ?
+            LIMIT 1
+            """,
+            (int(channel_id), int(table_id)),
+        ).fetchone()
+        return self._folder_channel_row_to_dict(row) if row else None
 
     def unlink_stale_folder_channels(
         self,
@@ -1593,7 +1749,7 @@ class Database:
             FROM folder_channels
             WHERE table_id = ?
               AND review_status = 'unchecked'
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY created_at ASC, id ASC
             """,
             (int(table_id),),
         ).fetchall()
@@ -1601,6 +1757,8 @@ class Database:
 
     def _folder_channel_row_to_dict(self, row: sqlite3.Row) -> dict:
         item = dict(row)
+        item["is_member"] = bool(item.get("is_member"))
+        item["is_sponsor"] = bool(item.get("is_sponsor"))
         try:
             item["source_channels"] = json.loads(item.get("source_channels_json") or "[]")
         except Exception:

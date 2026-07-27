@@ -112,6 +112,7 @@ def get_portal_user(
 async def on_startup() -> None:
     db.init()
     folder_parser.on_folder_added = telegram_bot.notify_folder_added
+    telegram_bot.on_channel_blacklisted = folder_parser.blacklist_channel
     await telegram_bot.restore_running_bots()
     await folder_parser.restore_running_listeners()
 
