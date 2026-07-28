@@ -1381,34 +1381,34 @@ button:disabled {
 }
 
 .channelReviewTable {
-  min-width: 1120px;
+  min-width: 1280px;
 }
 
 .channelReviewTable th:nth-child(1),
 .channelReviewTable td:nth-child(1) {
-  width: 28%;
+  width: 26%;
 }
 
 .channelReviewTable th:nth-child(2),
 .channelReviewTable td:nth-child(2),
 .channelReviewTable th:nth-child(3),
 .channelReviewTable td:nth-child(3) {
-  width: 12%;
+  width: 11%;
 }
 
 .channelReviewTable th:nth-child(4),
 .channelReviewTable td:nth-child(4) {
-  width: 18%;
+  width: 16%;
 }
 
 .channelReviewTable th:nth-child(5),
 .channelReviewTable td:nth-child(5) {
-  width: 18%;
+  width: 14%;
 }
 
 .channelReviewTable th:nth-child(6),
 .channelReviewTable td:nth-child(6) {
-  width: 12%;
+  width: 22%;
 }
 
 .folderChannelRow {
@@ -1619,7 +1619,64 @@ button:disabled {
 .channelReviewActions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.channelLabelEditor {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.channelLabelButton,
+.channelLabelPill {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(83, 220, 255, 0.22);
+  border-radius: 10px;
+  padding: 0 9px;
+  background: rgba(9, 24, 37, 0.72);
+  color: #b9d8df;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.channelLabelButton {
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.channelLabelButton.member.isSelected,
+.channelLabelPill.member {
+  border-color: rgba(52, 255, 181, 0.42);
+  background: rgba(16, 201, 147, 0.14);
+  color: #68ffc7;
+}
+
+.channelLabelButton.sponsor.isSelected,
+.channelLabelPill.sponsor {
+  border-color: rgba(255, 213, 88, 0.45);
+  background: rgba(255, 193, 32, 0.13);
+  color: #ffe083;
+}
+
+.channelLabelButton.bad.isSelected,
+.channelLabelPill.bad {
+  border-color: rgba(255, 91, 112, 0.44);
+  background: rgba(255, 79, 100, 0.13);
+  color: #ff8d9b;
+}
+
+.channelReviewActions .inlineIconButton.saveLabels {
+  color: #68ffc7;
+}
+
+.channelReviewActions .inlineIconButton.saveLabels:disabled {
+  opacity: 0.36;
 }
 
 .channelReviewActions .inlineIconButton,
@@ -2343,6 +2400,682 @@ tbody tr:hover {
   min-width: 32px;
 }
 
+.collectionTopBar {
+  max-width: 1460px;
+  margin-bottom: 26px;
+}
+
+.collectionTopBar > div:first-child {
+  display: grid;
+  gap: 8px;
+}
+
+.collectionTopBar h1 {
+  font-size: clamp(30px, 3vw, 46px);
+}
+
+.collectionTopBar p {
+  max-width: 620px;
+  margin: 0;
+  color: #7f9bad;
+  line-height: 1.5;
+}
+
+.collectionTableSelect {
+  z-index: 12;
+}
+
+.collectionTableStatic {
+  align-self: center;
+}
+
+.collectionError {
+  max-width: 1460px;
+  margin-bottom: 16px;
+}
+
+.folderCollectionWorkspace,
+.collectionLoading {
+  display: grid;
+  width: min(1460px, 100%);
+  gap: 18px;
+}
+
+.folderCollectionList {
+  display: grid;
+  gap: 14px;
+}
+
+.folderCollectionCard {
+  position: relative;
+  min-width: 0;
+  overflow: visible;
+  border: 1px solid rgba(82, 201, 230, 0.18);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(7, 22, 34, 0.94), rgba(3, 13, 22, 0.97)),
+    radial-gradient(circle at 92% 0%, rgba(0, 211, 255, 0.08), transparent 32%);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(194, 247, 255, 0.04);
+}
+
+.folderCollectionCard.isExpanded {
+  border-color: rgba(86, 217, 244, 0.28);
+}
+
+.folderCollectionHeader {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+  min-height: 68px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.folderCollectionToggle {
+  display: inline-grid;
+  grid-template-columns: 36px 18px;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #8ca6b7;
+}
+
+.folderCollectionGlyph {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(77, 221, 246, 0.2);
+  border-radius: 12px;
+  background: rgba(15, 43, 59, 0.64);
+  color: #71efff;
+}
+
+.folderCollectionChevron {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.folderCollectionCard.isExpanded .folderCollectionChevron {
+  transform: rotate(180deg);
+}
+
+.folderCollectionToggle:hover .folderCollectionGlyph,
+.folderCollectionToggle:focus-visible .folderCollectionGlyph {
+  border-color: rgba(95, 233, 255, 0.5);
+  background: rgba(19, 57, 74, 0.76);
+}
+
+.folderCollectionToggle:focus-visible {
+  outline: none;
+}
+
+.folderCollectionTitleInput {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  color: #e9f9ff;
+  font-size: 18px;
+  font-weight: 780;
+  letter-spacing: -0.01em;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.folderCollectionTitleInput:hover {
+  background: rgba(10, 32, 46, 0.56);
+}
+
+.folderCollectionTitleInput:focus {
+  border-color: rgba(94, 228, 250, 0.42);
+  background: rgba(7, 27, 41, 0.84);
+  outline: none;
+}
+
+.folderCollectionCount {
+  min-width: 82px;
+  color: #718e9f;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.folderCollectionDelete {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 42px;
+}
+
+.collectionDeleteButton,
+.collectionRowDelete {
+  color: #7e98aa;
+}
+
+.collectionDeleteButton:hover,
+.collectionRowDelete:hover {
+  border-color: rgba(255, 101, 123, 0.38);
+  background: rgba(255, 74, 104, 0.1);
+  color: #ff8da1;
+}
+
+.collectionDeleteConfirm {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(255, 111, 133, 0.26);
+  border-radius: 12px;
+  padding: 4px 5px 4px 10px;
+  background: rgba(61, 16, 28, 0.58);
+  color: #ff9aad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.collectionDeleteConfirm button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+}
+
+.collectionDeleteConfirm button:first-of-type:hover {
+  background: rgba(255, 87, 113, 0.18);
+}
+
+.collectionDeleteConfirm button:last-of-type:hover {
+  background: rgba(114, 230, 246, 0.12);
+  color: #a9f5ff;
+}
+
+.folderCollectionBody {
+  border-top: 1px solid rgba(93, 208, 234, 0.12);
+  padding: 0 14px 14px;
+}
+
+.folderCollectionTableScroll {
+  overflow-x: auto;
+}
+
+.folderCollectionTable {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+}
+
+.folderCollectionTable th {
+  height: 50px;
+  padding: 0 10px;
+  color: #7491a3;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.folderCollectionTable td {
+  position: relative;
+  height: 72px;
+  border-top: 1px solid rgba(89, 190, 216, 0.08);
+  padding: 10px;
+  vertical-align: middle;
+}
+
+.folderCollectionTable tbody tr {
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.folderCollectionTable tbody tr:hover {
+  background: rgba(18, 51, 67, 0.22);
+}
+
+.folderCollectionTable tbody tr.isSaving {
+  opacity: 0.68;
+}
+
+.folderCollectionTable th:nth-child(1),
+.folderCollectionTable td:nth-child(1) {
+  width: 25%;
+}
+
+.folderCollectionTable th:nth-child(2),
+.folderCollectionTable td:nth-child(2) {
+  width: 16%;
+}
+
+.folderCollectionTable th:nth-child(3),
+.folderCollectionTable td:nth-child(3) {
+  width: 13%;
+}
+
+.folderCollectionTable th:nth-child(4),
+.folderCollectionTable td:nth-child(4) {
+  width: 18%;
+}
+
+.folderCollectionTable th:nth-child(5),
+.folderCollectionTable td:nth-child(5),
+.folderCollectionTable th:nth-child(6),
+.folderCollectionTable td:nth-child(6) {
+  width: 11%;
+}
+
+.folderCollectionTable th:last-child,
+.folderCollectionTable td:last-child {
+  width: 52px;
+  padding-right: 4px;
+  text-align: right;
+}
+
+.collectionInputShell {
+  display: block;
+  min-width: 170px;
+}
+
+.collectionInputShell input {
+  width: 100%;
+  height: 42px;
+  border: 1px solid rgba(91, 195, 222, 0.17);
+  border-radius: 11px;
+  padding: 0 12px;
+  background: rgba(2, 12, 20, 0.62);
+  color: #dff7ff;
+  outline: none;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.collectionInputShell input::placeholder {
+  color: #506b7c;
+}
+
+.collectionInputShell input:hover {
+  border-color: rgba(95, 217, 242, 0.3);
+}
+
+.collectionInputShell input:focus {
+  border-color: rgba(91, 231, 250, 0.52);
+  background: rgba(5, 21, 32, 0.92);
+}
+
+.collectionChannelChip {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 28px;
+  min-width: 210px;
+  max-width: 310px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(89, 220, 244, 0.22);
+  border-radius: 13px;
+  padding: 6px;
+  background: rgba(10, 35, 49, 0.74);
+  box-shadow: inset 0 1px 0 rgba(214, 252, 255, 0.04);
+}
+
+.collectionChannelChip > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.collectionChannelChip strong,
+.collectionChannelChip em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collectionChannelChip strong {
+  color: #e4f8ff;
+  font-size: 13px;
+}
+
+.collectionChannelChip em {
+  color: #6f91a4;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.collectionChannelChip button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #6f8c9e;
+}
+
+.collectionChannelChip button:hover {
+  background: rgba(255, 88, 113, 0.1);
+  color: #ff8ba0;
+}
+
+.collectionChannelAvatar {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(190, 241, 252, 0.18);
+  border-radius: 11px;
+  object-fit: cover;
+}
+
+.collectionChannelAvatar.small {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+
+.collectionChannelAvatar.fallback {
+  display: inline-grid;
+  place-items: center;
+  background: linear-gradient(135deg, rgba(0, 205, 240, 0.24), rgba(32, 211, 158, 0.17));
+  color: #dffbff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.collectionRoleSelect,
+.collectionSourcesCell {
+  position: relative;
+}
+
+.collectionRoleButton,
+.collectionSourcesButton {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  border: 1px solid rgba(86, 191, 217, 0.18);
+  border-radius: 11px;
+  padding: 0 11px;
+  background: rgba(5, 20, 31, 0.78);
+  color: #bcd1db;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.collectionRoleButton {
+  width: 124px;
+}
+
+.collectionRoleButton.sponsor {
+  border-color: rgba(59, 218, 157, 0.32);
+  background: rgba(26, 104, 76, 0.18);
+  color: #75efbd;
+}
+
+.collectionRoleButton:hover,
+.collectionRoleButton:focus-visible,
+.collectionSourcesButton:hover,
+.collectionSourcesButton:focus-visible {
+  border-color: rgba(97, 222, 247, 0.42);
+  outline: none;
+}
+
+.collectionRoleButton svg,
+.collectionSourcesButton svg {
+  transition: transform 160ms ease;
+}
+
+.collectionRoleSelect.isOpen .collectionRoleButton svg,
+.collectionSourcesButton.isOpen svg {
+  transform: rotate(180deg);
+}
+
+.collectionRoleMenu,
+.collectionSourcesMenu {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  z-index: 12;
+  overflow: hidden;
+  border: 1px solid rgba(96, 215, 242, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(8, 27, 41, 0.99), rgba(4, 14, 23, 0.99));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
+}
+
+.collectionRoleMenu {
+  display: grid;
+  width: 150px;
+}
+
+.collectionRoleMenu button {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 1px solid rgba(91, 185, 211, 0.09);
+  padding: 0 10px;
+  background: transparent;
+  color: #bcd1db;
+  text-align: left;
+}
+
+.collectionRoleMenu button:last-child {
+  border-bottom: 0;
+}
+
+.collectionRoleMenu button:hover,
+.collectionRoleMenu button.isSelected {
+  background: rgba(26, 121, 146, 0.17);
+  color: #e2f9ff;
+}
+
+.collectionRoleMenu button.sponsor {
+  color: #75efbd;
+}
+
+.collectionSourcesButton {
+  min-width: 104px;
+}
+
+.collectionSourcesButton.hasIntersection {
+  border-color: rgba(67, 231, 169, 0.42);
+  background: rgba(30, 132, 94, 0.18);
+  color: #7ff1c1;
+}
+
+.collectionSourcesMenu {
+  display: grid;
+  width: 270px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.collectionSourcesMenu > div {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  min-height: 46px;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid rgba(91, 185, 211, 0.08);
+  padding: 8px 10px;
+  color: #a8bec9;
+  font-size: 12px;
+}
+
+.collectionSourcesMenu > div:last-child {
+  border-bottom: 0;
+}
+
+.collectionSourcesMenu > div.isIntersection {
+  background: rgba(31, 130, 94, 0.19);
+  color: #84f1c5;
+}
+
+.collectionSourcesMenu > div span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collectionSourcesMenu > div svg {
+  color: #58e8aa;
+}
+
+.collectionMetric {
+  color: #d9eff7;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.collectionEmptyMetric {
+  display: inline-block;
+  max-width: 130px;
+  color: #577485;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.collectionRowsEmpty {
+  display: grid;
+  min-height: 70px;
+  place-items: center;
+  border-top: 1px solid rgba(89, 190, 216, 0.08);
+  color: #5f7e90;
+  font-size: 13px;
+}
+
+.collectionAddChannelButton {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid rgba(84, 213, 240, 0.22);
+  border-radius: 12px;
+  padding: 0 14px;
+  background: rgba(9, 35, 48, 0.64);
+  color: #87eefa;
+  font-size: 13px;
+  font-weight: 750;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.collectionAddChannelButton:hover {
+  border-color: rgba(95, 231, 250, 0.44);
+  background: rgba(13, 50, 65, 0.8);
+}
+
+.collectionAddChannelButton:active,
+.collectionCreateButton:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.collectionCreateButton {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  justify-self: center;
+  border: 1px solid rgba(90, 229, 250, 0.42);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(14, 54, 69, 0.94), rgba(5, 25, 36, 0.98));
+  color: #8df4ff;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(207, 251, 255, 0.1);
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.collectionCreateButton:hover {
+  border-color: rgba(110, 241, 255, 0.7);
+  background: linear-gradient(145deg, rgba(18, 69, 85, 0.98), rgba(6, 31, 43, 0.98));
+}
+
+.collectionEmptyState {
+  display: grid;
+  min-height: 250px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  border: 1px dashed rgba(84, 204, 231, 0.2);
+  border-radius: 20px;
+  background: rgba(4, 17, 27, 0.44);
+  text-align: center;
+}
+
+.collectionEmptyIcon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border: 1px solid rgba(90, 220, 245, 0.25);
+  border-radius: 18px;
+  background: rgba(12, 42, 56, 0.66);
+  color: #75eefe;
+}
+
+.collectionEmptyState strong {
+  color: #dff7ff;
+  font-size: 17px;
+}
+
+.collectionEmptyState p {
+  max-width: 430px;
+  margin: 0;
+  color: #6d899a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.collectionSkeleton {
+  display: grid;
+  grid-template-columns: 48px 1fr 120px;
+  min-height: 70px;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid rgba(82, 201, 230, 0.13);
+  border-radius: 18px;
+  padding: 12px 16px;
+  background: rgba(5, 19, 30, 0.72);
+  animation: collectionSkeletonPulse 1.4s ease-in-out infinite;
+}
+
+.collectionSkeleton span,
+.collectionSkeleton i {
+  display: block;
+  border-radius: 10px;
+  background: rgba(91, 167, 188, 0.12);
+}
+
+.collectionSkeleton span {
+  width: 40px;
+  height: 40px;
+}
+
+.collectionSkeleton i {
+  width: min(280px, 70%);
+  height: 16px;
+}
+
+.collectionSkeleton i:last-child {
+  width: 88px;
+  justify-self: end;
+}
+
+@keyframes collectionSkeletonPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2412,6 +3145,35 @@ tbody tr:hover {
   .importMethods {
     grid-template-columns: 1fr;
   }
+
+  .collectionTopBar {
+    align-items: stretch;
+  }
+
+  .collectionTopBar .channelTableSelect,
+  .collectionTopBar .channelTableButton,
+  .collectionTopBar .channelTableStatic {
+    width: 100%;
+  }
+
+  .collectionTopBar .channelTableButton,
+  .collectionTopBar .channelTableStatic {
+    justify-content: space-between;
+  }
+
+  .collectionTopBar .channelTableMenu {
+    right: auto;
+    left: 0;
+    width: min(320px, 100%);
+  }
+
+  .folderCollectionHeader {
+    grid-template-columns: auto minmax(140px, 1fr) auto;
+  }
+
+  .folderCollectionCount {
+    display: none;
+  }
 }
 
 @media (max-width: 680px) {
@@ -2464,6 +3226,50 @@ tbody tr:hover {
   .statsGrid,
   .compactStats {
     grid-template-columns: 1fr;
+  }
+
+  .collectionTopBar h1 {
+    font-size: 30px;
+  }
+
+  .folderCollectionHeader {
+    grid-template-columns: auto minmax(100px, 1fr) auto;
+    gap: 7px;
+    padding: 9px;
+  }
+
+  .folderCollectionToggle {
+    grid-template-columns: 34px;
+  }
+
+  .folderCollectionToggle > .folderCollectionChevron {
+    display: none;
+  }
+
+  .folderCollectionTitleInput {
+    padding-right: 5px;
+    padding-left: 5px;
+    font-size: 15px;
+  }
+
+  .collectionDeleteConfirm > span {
+    display: none;
+  }
+
+  .folderCollectionBody {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .collectionAddChannelButton {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .collectionCreateButton {
+    width: 58px;
+    height: 58px;
+    border-radius: 18px;
   }
 
   .folderLogRow {

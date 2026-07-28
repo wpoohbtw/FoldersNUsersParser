@@ -86,6 +86,8 @@ export type ApiFolderChannel = {
   added_at: string;
   updated_at: string;
   check_status: 'checked' | 'unchecked' | 'rejected' | string;
+  is_member: boolean;
+  is_sponsor: boolean;
   source_channels: Array<{
     id: string;
     title: string;
@@ -111,6 +113,28 @@ export type ApiChannelTableAccess = {
   portal_username: string;
   role: 'owner' | 'editor' | string;
   created_at: string;
+};
+
+export type FolderCollectionRole = 'member' | 'sponsor';
+
+export type ApiFolderCollectionItem = {
+  id: number;
+  collection_id: number;
+  channel_id: number | null;
+  channel_ref: string;
+  admin_contact: string;
+  role: FolderCollectionRole;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiFolderCollection = {
+  id: number;
+  table_id: number;
+  title: string;
+  items: ApiFolderCollectionItem[];
+  created_at: string;
+  updated_at: string;
 };
 
 export type FolderListenerStatus = {
@@ -320,6 +344,46 @@ export const api = {
     const suffix = tableId ? `?table_id=${tableId}` : '';
     return request<{ items: ApiFolderChannel[] }>(`/api/v1/channels${suffix}`);
   },
+  async listFolderCollections(tableId: number) {
+    return request<{ items: ApiFolderCollection[] }>(`/api/v1/folder-collections?table_id=${tableId}`);
+  },
+  async createFolderCollection(tableId: number, title = 'Новая папка') {
+    return request<ApiFolderCollection>('/api/v1/folder-collections', {
+      method: 'POST',
+      body: JSON.stringify({ table_id: tableId, title }),
+    });
+  },
+  async updateFolderCollection(collectionId: number, title: string) {
+    return request<ApiFolderCollection>(`/api/v1/folder-collections/${collectionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+  },
+  async deleteFolderCollection(collectionId: number) {
+    return request<{ ok: boolean }>(`/api/v1/folder-collections/${collectionId}`, {
+      method: 'DELETE',
+    });
+  },
+  async addFolderCollectionItem(collectionId: number) {
+    return request<ApiFolderCollectionItem>(`/api/v1/folder-collections/${collectionId}/items`, {
+      method: 'POST',
+    });
+  },
+  async updateFolderCollectionItem(
+    collectionId: number,
+    itemId: number,
+    item: Pick<ApiFolderCollectionItem, 'channel_id' | 'channel_ref' | 'admin_contact' | 'role'>,
+  ) {
+    return request<ApiFolderCollectionItem>(`/api/v1/folder-collections/${collectionId}/items/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(item),
+    });
+  },
+  async deleteFolderCollectionItem(collectionId: number, itemId: number) {
+    return request<{ ok: boolean }>(`/api/v1/folder-collections/${collectionId}/items/${itemId}`, {
+      method: 'DELETE',
+    });
+  },
   async approveChannel(channelId: number, tableId?: number) {
     const suffix = tableId ? `?table_id=${tableId}` : '';
     return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/approve${suffix}`, {
@@ -336,6 +400,17 @@ export const api = {
     const suffix = tableId ? `?table_id=${tableId}` : '';
     return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/reset${suffix}`, {
       method: 'POST',
+    });
+  },
+  async saveChannelLabels(
+    channelId: number,
+    labels: { is_member: boolean; is_sponsor: boolean; is_bad: boolean },
+    tableId?: number,
+  ) {
+    const suffix = tableId ? `?table_id=${tableId}` : '';
+    return request<{ ok: boolean }>(`/api/v1/channels/${channelId}/labels${suffix}`, {
+      method: 'POST',
+      body: JSON.stringify(labels),
     });
   },
   async deleteChannels(channelIds: number[], tableId?: number) {

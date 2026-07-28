@@ -47,6 +47,7 @@ import {
   type ImportJob,
   type PortalUser,
 } from './api';
+import { FolderCollectionPage } from './components/FolderCollectionPage';
 import { VerticalDock } from './components/VerticalDock';
 
 const validityLabels: Record<string, string> = {
@@ -70,9 +71,15 @@ const roleClassNames: Record<AccountRole, string> = {
   Папка: 'folder',
 };
 
-type AppPage = 'accounts' | 'chat' | 'folder' | 'channels' | 'telegram';
+type AppPage = 'accounts' | 'chat' | 'folder' | 'channels' | 'collections' | 'telegram';
 type ListenerStatus = 'idle' | 'running' | 'restoring';
-type ChannelReviewFilter = 'all' | 'checked' | 'unchecked' | 'rejected';
+type ChannelReviewFilter = 'all' | 'unlabeled' | 'member' | 'sponsor' | 'bad';
+type ChannelLabel = 'member' | 'sponsor' | 'bad';
+type ChannelLabelSelection = {
+  member: boolean;
+  sponsor: boolean;
+  bad: boolean;
+};
 type ChannelSortKey = 'subscribers' | 'avg_views' | 'folder' | 'added_at';
 type SortDirection = 'asc' | 'desc';
 type ChannelSortState = {
@@ -749,12 +756,13 @@ const folderUi = {
   noChannels: '\u041a\u0430\u043d\u0430\u043b\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b',
   loadChannelsFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b',
   all: '\u0412\u0441\u0435',
-  checked: '\u041f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
-  unchecked: '\u041d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
-  rejected: '\u041d\u0435 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0442',
-  review: '\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430',
-  approved: '\u041f\u0440\u043e\u0432\u0435\u0440\u0435\u043d',
-  rejectedOne: '\u041d\u0435 \u043f\u043e\u0434\u0445\u043e\u0434\u0438\u0442',
+  unlabeled: '\u0411\u0435\u0437 \u043c\u0435\u0442\u043a\u0438',
+  member: '\u0423\u0447\u0430\u0441\u0442\u043d\u0438\u043a',
+  sponsor: '$',
+  bad: '\u0425\u0443\u0439\u043d\u044f',
+  labels: '\u041c\u0435\u0442\u043a\u0438',
+  saveLabels: '\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u043c\u0435\u0442\u043a\u0438',
+  returnToUnlabeled: '\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043c\u0435\u0442\u043a\u0438',
   logsConsole: '\u041a\u043e\u043d\u0441\u043e\u043b\u044c \u043b\u043e\u0433\u043e\u0432',
   clearLogs: '\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043b\u043e\u0433\u0438',
   noLogs: '\u041b\u043e\u0433\u043e\u0432 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442',
@@ -783,7 +791,6 @@ const folderUi = {
   savedFoldersFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u043f\u043a\u0438',
   refreshFoldersFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0430\u043f\u043a\u0438 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0430',
   toggleFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0441\u043b\u0443\u0448\u0430\u0442\u0435\u043b\u044c',
-  returnToUnchecked: '\u0412\u0435\u0440\u043d\u0443\u0442\u044c \u0432 \u043d\u0435\u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0435',
   deleteChannels: '\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b',
   selectChannels: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c',
   copyChannels: '\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c',
@@ -1180,6 +1187,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   const [channelsError, setChannelsError] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
+  const [pendingChannelLabels, setPendingChannelLabels] = useState<Record<number, ChannelLabelSelection>>({});
   const [sortState, setSortState] = useState<ChannelSortState>({ key: null, direction: null });
   const selectedTable = channelTables.find((table) => table.id === selectedTableId) || channelTables[0] || null;
 
@@ -1228,6 +1236,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   useEffect(() => {
     if (selectedTableId) {
       setSelectedChannelIds([]);
+      setPendingChannelLabels({});
       setSelectionMode(false);
       void loadChannels(selectedTableId);
     }
@@ -1235,10 +1244,11 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
 
   const counts = useMemo(
     () => ({
-      all: channels.filter((channel) => channel.check_status !== 'rejected').length,
-      checked: channels.filter((channel) => channel.check_status === 'checked').length,
-      unchecked: channels.filter((channel) => channel.check_status === 'unchecked').length,
-      rejected: channels.filter((channel) => channel.check_status === 'rejected').length,
+      all: channels.length,
+      unlabeled: channels.filter((channel) => !channel.is_member && !channel.is_sponsor && channel.check_status !== 'rejected').length,
+      member: channels.filter((channel) => channel.is_member).length,
+      sponsor: channels.filter((channel) => channel.is_sponsor).length,
+      bad: channels.filter((channel) => channel.check_status === 'rejected').length,
     }),
     [channels],
   );
@@ -1247,7 +1257,11 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   const visibleChannels = useMemo(
     () =>
       sortChannels(channels.filter((channel) => {
-        const matchesFilter = (activeFilter === 'all' && channel.check_status !== 'rejected') || (activeFilter !== 'all' && channel.check_status === activeFilter);
+        const matchesFilter = activeFilter === 'all'
+          || (activeFilter === 'unlabeled' && !channel.is_member && !channel.is_sponsor && channel.check_status !== 'rejected')
+          || (activeFilter === 'member' && channel.is_member)
+          || (activeFilter === 'sponsor' && channel.is_sponsor)
+          || (activeFilter === 'bad' && channel.check_status === 'rejected');
         return matchesFilter && channelMatchesSearch(channel, normalizedSearch);
       }), sortState),
     [activeFilter, channels, normalizedSearch, sortState],
@@ -1269,19 +1283,62 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
     });
   }
 
-  async function approveChannel(channelId: number) {
-    await api.approveChannel(channelId, selectedTableId || undefined);
-    setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'checked' } : channel)));
+  function toggleChannelLabel(channelId: number, label: ChannelLabel) {
+    setPendingChannelLabels((items) => {
+      const current = items[channelId] || { member: false, sponsor: false, bad: false };
+      const next = label === 'bad'
+        ? { member: false, sponsor: false, bad: !current.bad }
+        : { ...current, [label]: !current[label], bad: false };
+      return { ...items, [channelId]: next };
+    });
   }
 
-  async function rejectChannel(channelId: number) {
-    await api.rejectChannel(channelId, selectedTableId || undefined);
-    setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'rejected' } : channel)));
+  async function saveChannelLabels(channelId: number) {
+    const labels = pendingChannelLabels[channelId];
+    if (!labels || (!labels.member && !labels.sponsor && !labels.bad)) return;
+    setChannelsError('');
+    try {
+      await api.saveChannelLabels(
+        channelId,
+        {
+          is_member: labels.member,
+          is_sponsor: labels.sponsor,
+          is_bad: labels.bad,
+        },
+        selectedTableId || undefined,
+      );
+      setChannels((items) => items.map((channel) => (
+        channel.channel_id === channelId
+          ? {
+              ...channel,
+              check_status: labels.bad ? 'rejected' : 'checked',
+              is_member: labels.member,
+              is_sponsor: labels.sponsor,
+            }
+          : channel
+      )));
+      setPendingChannelLabels((items) => {
+        const next = { ...items };
+        delete next[channelId];
+        return next;
+      });
+    } catch (err) {
+      setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
+    }
   }
 
   async function resetChannel(channelId: number) {
     await api.resetChannel(channelId, selectedTableId || undefined);
-    setChannels((items) => items.map((channel) => (channel.channel_id === channelId ? { ...channel, check_status: 'unchecked' } : channel)));
+    setChannels((items) => items.map((channel) => (
+      channel.channel_id === channelId
+        ? { ...channel, check_status: 'unchecked', is_member: false, is_sponsor: false }
+        : channel
+    )));
+    setPendingChannelLabels((items) => {
+      const next = { ...items };
+      delete next[channelId];
+      return next;
+    });
   }
 
   function toggleSelectionMode() {
@@ -1316,9 +1373,10 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
 
   const filters: Array<{ id: ChannelReviewFilter; label: string; count: number }> = [
     { id: 'all', label: folderUi.all, count: counts.all },
-    { id: 'checked', label: folderUi.checked, count: counts.checked },
-    { id: 'unchecked', label: folderUi.unchecked, count: counts.unchecked },
-    { id: 'rejected', label: folderUi.rejected, count: counts.rejected },
+    { id: 'unlabeled', label: folderUi.unlabeled, count: counts.unlabeled },
+    { id: 'member', label: folderUi.member, count: counts.member },
+    { id: 'sponsor', label: folderUi.sponsor, count: counts.sponsor },
+    { id: 'bad', label: folderUi.bad, count: counts.bad },
   ];
 
   return (
@@ -1391,11 +1449,14 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
           <div className="animatedTableGradient top" />
           <div className="folderChannelsScroll channelsReviewScroll">
             <table className="folderChannelsTable channelReviewTable">
-              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th><SortableChannelHeader label={folderUi.subscribers} sortKey="subscribers" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label="Avg views" sortKey="avg_views" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.folder} sortKey="folder" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.addedAt} sortKey="added_at" sortState={sortState} onSort={toggleSort} /></th><th>{folderUi.review}</th></tr></thead>
+              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th><SortableChannelHeader label={folderUi.subscribers} sortKey="subscribers" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label="Avg views" sortKey="avg_views" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.folder} sortKey="folder" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.addedAt} sortKey="added_at" sortState={sortState} onSort={toggleSort} /></th><th>{folderUi.labels}</th></tr></thead>
               <tbody>
                 {visibleChannels.length ? visibleChannels.map((channel, index) => {
                   const isExpanded = expandedChannelId === channel.id;
                   const isSelected = selectedChannelIds.includes(channel.channel_id);
+                  const labelSelection = pendingChannelLabels[channel.channel_id] || { member: false, sponsor: false, bad: false };
+                  const hasPendingLabels = labelSelection.member || labelSelection.sponsor || labelSelection.bad;
+                  const hasSavedLabels = channel.is_member || channel.is_sponsor || channel.check_status === 'rejected';
                   return (
                     <motion.tr className="folderChannelRow" data-index={index} initial={{ scale: 0.97, opacity: 0 }} whileInView={{ scale: 1, opacity: 1 }} viewport={{ amount: 0.42, once: false }} transition={{ duration: 0.2, delay: 0.04 }} key={channel.id}>
                       <td>
@@ -1416,12 +1477,20 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
                       <td><div className="folderSourceCell">{channel.source_channels.length > 0 ? <><button className={`sourceToggle${isExpanded ? ' isOpen' : ''}`} type="button" onClick={() => setExpandedChannelId((value) => (value === channel.id ? null : channel.id))} aria-label={folderUi.showFolderChannels}><span>{formatChannelsCount(channel.source_channels.length)}</span><ChevronDown size={15} /></button><AnimatePresence initial={false}>{isExpanded && <motion.div className="sourceChannelsList" initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.98 }} transition={{ duration: 0.16 }}>{channel.source_channels.map((source, sourceIndex) => <motion.div className="sourceChannelItem" initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, delay: sourceIndex * 0.035 }} key={source.id}><ChannelAvatar src={source.avatar_url} title={source.title} size="small" /><span>{source.title}</span></motion.div>)}</motion.div>}</AnimatePresence></> : <span className="folderSourceDash">&mdash;</span>}</div></td>
                       <td className="mutedText">{formatDateTime(channel.added_at)}</td>
                       <td>
-                        {channel.check_status === 'checked' ? (
-                          <div className="channelReviewActions"><span className="channelReviewState checked" title={folderUi.approved} aria-label={folderUi.approved}><CheckCircle2 size={17} /></span><button className="inlineIconButton reset" type="button" onClick={() => void resetChannel(channel.channel_id)} title={folderUi.returnToUnchecked} aria-label={folderUi.returnToUnchecked}><RotateCcw size={16} /></button></div>
-                        ) : channel.check_status === 'rejected' ? (
-                          <div className="channelReviewActions"><span className="channelReviewState rejected" title={folderUi.rejectedOne} aria-label={folderUi.rejectedOne}><X size={17} /></span><button className="inlineIconButton reset" type="button" onClick={() => void resetChannel(channel.channel_id)} title={folderUi.returnToUnchecked} aria-label={folderUi.returnToUnchecked}><RotateCcw size={16} /></button></div>
+                        {hasSavedLabels ? (
+                          <div className="channelReviewActions channelSavedLabels">
+                            {channel.is_member && <span className="channelLabelPill member">{folderUi.member}</span>}
+                            {channel.is_sponsor && <span className="channelLabelPill sponsor">{folderUi.sponsor}</span>}
+                            {channel.check_status === 'rejected' && <span className="channelLabelPill bad">{folderUi.bad}</span>}
+                            <button className="inlineIconButton reset" type="button" onClick={() => void resetChannel(channel.channel_id)} title={folderUi.returnToUnlabeled} aria-label={folderUi.returnToUnlabeled}><RotateCcw size={16} /></button>
+                          </div>
                         ) : (
-                          <div className="channelReviewActions"><button className="inlineIconButton approve" type="button" onClick={() => void approveChannel(channel.channel_id)} title={folderUi.approved} aria-label={folderUi.approved}><CheckCircle2 size={16} /></button><button className="inlineIconButton reject" type="button" onClick={() => void rejectChannel(channel.channel_id)} title={folderUi.rejectedOne} aria-label={folderUi.rejectedOne}><X size={16} /></button></div>
+                          <div className="channelReviewActions channelLabelEditor">
+                            <button className={`channelLabelButton member${labelSelection.member ? ' isSelected' : ''}`} type="button" onClick={() => toggleChannelLabel(channel.channel_id, 'member')}>{labelSelection.member && <CheckCircle2 size={13} />}{folderUi.member}</button>
+                            <button className={`channelLabelButton sponsor${labelSelection.sponsor ? ' isSelected' : ''}`} type="button" onClick={() => toggleChannelLabel(channel.channel_id, 'sponsor')}>{labelSelection.sponsor && <CheckCircle2 size={13} />}{folderUi.sponsor}</button>
+                            <button className={`channelLabelButton bad${labelSelection.bad ? ' isSelected' : ''}`} type="button" onClick={() => toggleChannelLabel(channel.channel_id, 'bad')}>{labelSelection.bad && <CheckCircle2 size={13} />}{folderUi.bad}</button>
+                            <button className="inlineIconButton saveLabels" type="button" onClick={() => void saveChannelLabels(channel.channel_id)} disabled={!hasPendingLabels} title={folderUi.saveLabels} aria-label={folderUi.saveLabels}><CheckCircle2 size={16} /></button>
+                          </div>
                         )}
                       </td>
                     </motion.tr>
@@ -1808,7 +1877,14 @@ function getStoredPage(storageKey = APP_PAGE_STORAGE_KEY): AppPage {
     return 'accounts';
   }
   const value = window.localStorage.getItem(storageKey);
-  return value === 'accounts' || value === 'chat' || value === 'folder' || value === 'channels' || value === 'telegram' ? value : 'accounts';
+  return value === 'accounts'
+    || value === 'chat'
+    || value === 'folder'
+    || value === 'channels'
+    || value === 'collections'
+    || value === 'telegram'
+    ? value
+    : 'accounts';
 }
 
 export function App() {
@@ -2005,6 +2081,7 @@ export function App() {
     { icon: <MessageCircle size={22} />, label: 'Chat', active: activePage === 'chat', onClick: () => setActivePage('chat') },
     { icon: <Folder size={22} />, label: 'Folder', active: activePage === 'folder', onClick: () => setActivePage('folder') },
     { icon: <RadioTower size={22} />, label: 'Каналы', active: activePage === 'channels', onClick: () => setActivePage('channels') },
+    { icon: <FolderOpen size={22} />, label: 'Сбор папок', active: activePage === 'collections', onClick: () => setActivePage('collections') },
     { icon: <Bot size={22} />, label: 'Telegram', active: activePage === 'telegram', onClick: () => setActivePage('telegram') },
   ];
   const portalHomeItem = { icon: <Home size={22} />, label: 'На главную', onClick: () => { window.location.href = '/'; } };
@@ -2091,6 +2168,7 @@ export function App() {
         )}
         {activePage === 'folder' && <FoldersPage accounts={accounts} portalUser={portalUser} />}
         {activePage === 'channels' && <ChannelsPage onToast={showToast} />}
+        {activePage === 'collections' && <FolderCollectionPage />}
         {activePage === 'telegram' && <TelegramPage onToast={showToast} />}
         {activePage === 'chat' && (
           <section className="placeholderPanel">

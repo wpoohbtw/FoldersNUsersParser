@@ -47,8 +47,30 @@ class ChannelDeleteRequest(BaseModel):
     table_id: int | None = None
 
 
+class ChannelLabelsRequest(BaseModel):
+    is_member: bool = False
+    is_sponsor: bool = False
+    is_bad: bool = False
+
+
 class ChannelTableAccessRequest(BaseModel):
     username: str
+
+
+class FolderCollectionCreateRequest(BaseModel):
+    table_id: int
+    title: str = "Новая папка"
+
+
+class FolderCollectionUpdateRequest(BaseModel):
+    title: str
+
+
+class FolderCollectionItemRequest(BaseModel):
+    channel_id: int | None = None
+    channel_ref: str = ""
+    admin_contact: str = ""
+    role: str = "member"
 
 
 class PhoneStartRequest(BaseModel):
@@ -299,6 +321,128 @@ def list_channels(table_id: int | None = None, portal_user: PortalUser = Depends
         raise HTTPException(status_code=403, detail=str(err)) from err
 
 
+@app.get("/api/v1/folder-collections")
+def list_folder_collections(table_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    return {
+        "items": db.list_folder_collections(
+            int(table["id"]),
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    }
+
+
+@app.post("/api/v1/folder-collections")
+def create_folder_collection(
+    payload: FolderCollectionCreateRequest,
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    table = db.get_accessible_channel_table(payload.table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    return db.create_folder_collection(
+        int(table["id"]),
+        payload.title,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+
+
+@app.patch("/api/v1/folder-collections/{collection_id}")
+def update_folder_collection(
+    collection_id: int,
+    payload: FolderCollectionUpdateRequest,
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    collection = db.update_folder_collection(
+        collection_id,
+        payload.title,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+    if not collection:
+        raise HTTPException(status_code=404, detail="Подборка папки не найдена")
+    return collection
+
+
+@app.delete("/api/v1/folder-collections/{collection_id}")
+def delete_folder_collection(collection_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    deleted = db.delete_folder_collection(
+        collection_id,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Подборка папки не найдена")
+    return {"ok": True}
+
+
+@app.post("/api/v1/folder-collections/{collection_id}/items")
+def add_folder_collection_item(collection_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    item = db.add_folder_collection_item(
+        collection_id,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Подборка папки не найдена")
+    return item
+
+
+@app.put("/api/v1/folder-collections/{collection_id}/items/{item_id}")
+def update_folder_collection_item(
+    collection_id: int,
+    item_id: int,
+    payload: FolderCollectionItemRequest,
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    collection = db.get_folder_collection(
+        collection_id,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+    if not collection:
+        raise HTTPException(status_code=404, detail="Подборка папки не найдена")
+    if payload.channel_id is not None and not db.get_folder_channel(payload.channel_id, int(collection["table_id"])):
+        raise HTTPException(status_code=400, detail="Канал не найден в выбранной таблице")
+    try:
+        item = db.update_folder_collection_item(
+            collection_id,
+            item_id,
+            channel_id=payload.channel_id,
+            channel_ref=payload.channel_ref,
+            admin_contact=payload.admin_contact,
+            role=payload.role,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    if not item:
+        raise HTTPException(status_code=404, detail="Строка подборки не найдена")
+    return item
+
+
+@app.delete("/api/v1/folder-collections/{collection_id}/items/{item_id}")
+def delete_folder_collection_item(
+    collection_id: int,
+    item_id: int,
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    deleted = db.delete_folder_collection_item(
+        collection_id,
+        item_id,
+        portal_user_id=portal_user.user_id,
+        portal_username=portal_user.username,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Строка подборки не найдена")
+    return {"ok": True}
+
+
 @app.get("/api/v1/channel-tables")
 def list_channel_tables(portal_user: PortalUser = Depends(get_portal_user)) -> dict:
     return {"items": db.list_channel_tables(portal_user_id=portal_user.user_id, portal_username=portal_user.username)}
@@ -387,6 +531,31 @@ def reset_channel(channel_id: int, table_id: int | None = None, portal_user: Por
     if not table:
         raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
     folder_parser.reset_channel(channel_id, int(table["id"]), portal_user_id=portal_user.user_id, portal_username=portal_user.username)
+    return {"ok": True}
+
+
+@app.post("/api/v1/channels/{channel_id}/labels")
+async def save_channel_labels(
+    channel_id: int,
+    payload: ChannelLabelsRequest,
+    table_id: int | None = None,
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    try:
+        await folder_parser.save_channel_labels(
+            channel_id,
+            int(table["id"]),
+            is_member=payload.is_member,
+            is_sponsor=payload.is_sponsor,
+            is_bad=payload.is_bad,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
     return {"ok": True}
 
 

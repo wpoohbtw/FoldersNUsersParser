@@ -68,6 +68,9 @@ class ChannelReviewDatabaseTests(unittest.TestCase):
         self.assertTrue(saved["is_member"])
         self.assertTrue(saved["is_sponsor"])
         self.assertFalse(self.db.is_channel_blacklisted(101, self.table_id))
+        payload = FolderParserService(SimpleNamespace(), self.db)._channel_payload(saved)
+        self.assertTrue(payload["is_member"])
+        self.assertTrue(payload["is_sponsor"])
         queue = self.db.list_unchecked_channels_for_table(self.table_id, "", "tester")
         self.assertEqual([row["channel_id"] for row in queue], [202])
 

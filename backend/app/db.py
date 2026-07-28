@@ -195,6 +195,35 @@ class Database:
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS folder_collections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                portal_user_id TEXT,
+                portal_username TEXT,
+                table_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(table_id) REFERENCES channel_tables(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS folder_collection_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collection_id INTEGER NOT NULL,
+                channel_id INTEGER,
+                channel_ref TEXT NOT NULL DEFAULT '',
+                admin_contact TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'member',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(collection_id) REFERENCES folder_collections(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS processed_folder_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 portal_user_id TEXT,
@@ -326,6 +355,23 @@ class Database:
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_blacklist_table_channel
             ON channel_blacklist(table_id, channel_id)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_folder_collections_owner_table
+            ON folder_collections(
+                COALESCE(portal_user_id, ''),
+                COALESCE(portal_username, ''),
+                table_id,
+                id
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_folder_collection_items_collection
+            ON folder_collection_items(collection_id, id)
             """
         )
         cur.execute(
@@ -522,6 +568,7 @@ class Database:
                 (old_table_id,),
             ).fetchall()
             self.conn.execute("UPDATE folder_channels SET table_id = ? WHERE table_id = ?", (current_table_id, old_table_id))
+            self.conn.execute("UPDATE folder_collections SET table_id = ? WHERE table_id = ?", (current_table_id, old_table_id))
             for access in old_access_rows:
                 self.conn.execute(
                     """
@@ -569,6 +616,7 @@ class Database:
             "folder_listeners",
             "folder_parser_logs",
             "folder_channels",
+            "folder_collections",
             "processed_folder_links",
         ):
             self.conn.execute(
@@ -1257,6 +1305,264 @@ class Database:
         if portal_username:
             return "owner_portal_user_id IS NULL AND owner_portal_username = ?", [portal_username]
         return "owner_portal_user_id IS NULL AND (owner_portal_username IS NULL OR owner_portal_username = '')", []
+
+    def list_folder_collections(
+        self,
+        table_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> list[dict]:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        collection_rows = self.conn.execute(
+            f"""
+            SELECT *
+            FROM folder_collections
+            WHERE table_id = ? AND {where}
+            ORDER BY created_at ASC, id ASC
+            """,
+            (int(table_id), *args),
+        ).fetchall()
+        collections: list[dict] = []
+        for row in collection_rows:
+            item = dict(row)
+            item_rows = self.conn.execute(
+                """
+                SELECT id, collection_id, channel_id, channel_ref, admin_contact, role, created_at, updated_at
+                FROM folder_collection_items
+                WHERE collection_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (int(item["id"]),),
+            ).fetchall()
+            item["items"] = [self._folder_collection_item_payload(dict(item_row)) for item_row in item_rows]
+            collections.append(self._folder_collection_payload(item))
+        return collections
+
+    def get_folder_collection(
+        self,
+        collection_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict | None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        row = self.conn.execute(
+            f"""
+            SELECT *
+            FROM folder_collections
+            WHERE id = ? AND {where}
+            LIMIT 1
+            """,
+            (int(collection_id), *args),
+        ).fetchone()
+        return self._folder_collection_payload(dict(row)) if row else None
+
+    def create_folder_collection(
+        self,
+        table_id: int,
+        title: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        now = _utc_now()
+        normalized_title = title.strip() or "Новая папка"
+        cur = self.conn.execute(
+            """
+            INSERT INTO folder_collections(
+                portal_user_id, portal_username, table_id, title, created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                portal_user_id or None,
+                portal_username or None,
+                int(table_id),
+                normalized_title,
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        collection = self.get_folder_collection(int(cur.lastrowid), portal_user_id, portal_username)
+        if not collection:
+            raise RuntimeError("Не удалось создать подборку папки")
+        return collection
+
+    def update_folder_collection(
+        self,
+        collection_id: int,
+        title: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict | None:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        normalized_title = title.strip() or "Новая папка"
+        cur = self.conn.execute(
+            f"""
+            UPDATE folder_collections
+            SET title = ?, updated_at = ?
+            WHERE id = ? AND {where}
+            """,
+            (normalized_title, _utc_now(), int(collection_id), *args),
+        )
+        self.conn.commit()
+        if not cur.rowcount:
+            return None
+        return self.get_folder_collection(collection_id, portal_user_id, portal_username)
+
+    def delete_folder_collection(
+        self,
+        collection_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> bool:
+        where, args = self._owner_where(portal_user_id, portal_username)
+        collection = self.conn.execute(
+            f"""
+            SELECT id
+            FROM folder_collections
+            WHERE id = ? AND {where}
+            LIMIT 1
+            """,
+            (int(collection_id), *args),
+        ).fetchone()
+        if not collection:
+            return False
+        self.conn.execute(
+            "DELETE FROM folder_collection_items WHERE collection_id = ?",
+            (int(collection_id),),
+        )
+        self.conn.execute(
+            f"DELETE FROM folder_collections WHERE id = ? AND {where}",
+            (int(collection_id), *args),
+        )
+        self.conn.commit()
+        return True
+
+    def add_folder_collection_item(
+        self,
+        collection_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict | None:
+        collection = self.get_folder_collection(collection_id, portal_user_id, portal_username)
+        if not collection:
+            return None
+        now = _utc_now()
+        cur = self.conn.execute(
+            """
+            INSERT INTO folder_collection_items(
+                collection_id, channel_id, channel_ref, admin_contact, role, created_at, updated_at
+            )
+            VALUES(?, NULL, '', '', 'member', ?, ?)
+            """,
+            (int(collection_id), now, now),
+        )
+        self.conn.execute(
+            "UPDATE folder_collections SET updated_at = ? WHERE id = ?",
+            (now, int(collection_id)),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM folder_collection_items WHERE id = ? LIMIT 1",
+            (int(cur.lastrowid),),
+        ).fetchone()
+        return self._folder_collection_item_payload(dict(row)) if row else None
+
+    def update_folder_collection_item(
+        self,
+        collection_id: int,
+        item_id: int,
+        *,
+        channel_id: int | None,
+        channel_ref: str,
+        admin_contact: str,
+        role: str,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict | None:
+        collection = self.get_folder_collection(collection_id, portal_user_id, portal_username)
+        if not collection:
+            return None
+        normalized_role = role.strip().lower()
+        if normalized_role not in {"member", "sponsor"}:
+            raise ValueError("Неизвестная роль канала")
+        now = _utc_now()
+        cur = self.conn.execute(
+            """
+            UPDATE folder_collection_items
+            SET channel_id = ?,
+                channel_ref = ?,
+                admin_contact = ?,
+                role = ?,
+                updated_at = ?
+            WHERE id = ? AND collection_id = ?
+            """,
+            (
+                int(channel_id) if channel_id is not None else None,
+                channel_ref.strip(),
+                admin_contact.strip(),
+                normalized_role,
+                now,
+                int(item_id),
+                int(collection_id),
+            ),
+        )
+        if not cur.rowcount:
+            return None
+        self.conn.execute(
+            "UPDATE folder_collections SET updated_at = ? WHERE id = ?",
+            (now, int(collection_id)),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM folder_collection_items WHERE id = ? LIMIT 1",
+            (int(item_id),),
+        ).fetchone()
+        return self._folder_collection_item_payload(dict(row)) if row else None
+
+    def delete_folder_collection_item(
+        self,
+        collection_id: int,
+        item_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> bool:
+        collection = self.get_folder_collection(collection_id, portal_user_id, portal_username)
+        if not collection:
+            return False
+        cur = self.conn.execute(
+            "DELETE FROM folder_collection_items WHERE id = ? AND collection_id = ?",
+            (int(item_id), int(collection_id)),
+        )
+        if cur.rowcount:
+            self.conn.execute(
+                "UPDATE folder_collections SET updated_at = ? WHERE id = ?",
+                (_utc_now(), int(collection_id)),
+            )
+        self.conn.commit()
+        return bool(cur.rowcount)
+
+    def _folder_collection_payload(self, row: dict) -> dict:
+        return {
+            "id": int(row["id"]),
+            "table_id": int(row["table_id"]),
+            "title": row.get("title") or "Новая папка",
+            "items": row.get("items") or [],
+            "created_at": row.get("created_at") or "",
+            "updated_at": row.get("updated_at") or "",
+        }
+
+    def _folder_collection_item_payload(self, row: dict) -> dict:
+        return {
+            "id": int(row["id"]),
+            "collection_id": int(row["collection_id"]),
+            "channel_id": int(row["channel_id"]) if row.get("channel_id") is not None else None,
+            "channel_ref": row.get("channel_ref") or "",
+            "admin_contact": row.get("admin_contact") or "",
+            "role": row.get("role") or "member",
+            "created_at": row.get("created_at") or "",
+            "updated_at": row.get("updated_at") or "",
+        }
 
     def upsert_folder_channel(
         self,

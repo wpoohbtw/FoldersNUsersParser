@@ -675,6 +675,28 @@ class FolderParserService:
             table_id=table_id,
         )
 
+    async def save_channel_labels(
+        self,
+        channel_id: int,
+        table_id: int,
+        *,
+        is_member: bool,
+        is_sponsor: bool,
+        is_bad: bool,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> None:
+        self._ensure_table_access(table_id, portal_user_id, portal_username)
+        self.db.save_folder_channel_labels(
+            channel_id,
+            table_id,
+            is_member=is_member,
+            is_sponsor=is_sponsor,
+            is_bad=is_bad,
+        )
+        if is_bad:
+            await self.blacklist_channel(table_id, channel_id)
+
     def delete_channels(self, channel_ids: list[int], table_id: int, portal_user_id: str = "", portal_username: str = "") -> int:
         self._ensure_table_access(table_id, portal_user_id, portal_username)
         return self.db.delete_folder_channels(
@@ -1232,6 +1254,8 @@ class FolderParserService:
             "added_at": row.get("created_at") or "",
             "updated_at": row.get("updated_at") or "",
             "check_status": row.get("review_status") or "unchecked",
+            "is_member": bool(row.get("is_member")),
+            "is_sponsor": bool(row.get("is_sponsor")),
             "source_channels": row.get("source_channels") or [],
         }
 
