@@ -81,6 +81,7 @@ export type ApiFolderChannel = {
   username: string;
   url: string;
   avatar_url: string;
+  admin_contact: string;
   subscribers: number;
   avg_views: number;
   added_at: string;
@@ -93,6 +94,15 @@ export type ApiFolderChannel = {
     title: string;
     avatar_url: string;
   }>;
+};
+
+export type ChannelRefreshStatus = {
+  status: 'idle' | 'running' | 'done' | 'failed' | string;
+  total: number;
+  processed: number;
+  updated: number;
+  failed: number;
+  message: string;
 };
 
 export type ApiChannelTable = {
@@ -343,6 +353,20 @@ export const api = {
   async listChannels(tableId?: number) {
     const suffix = tableId ? `?table_id=${tableId}` : '';
     return request<{ items: ApiFolderChannel[] }>(`/api/v1/channels${suffix}`);
+  },
+  async startChannelRefresh(tableId: number) {
+    return request<ChannelRefreshStatus>(`/api/v1/channels/refresh?table_id=${tableId}`, {
+      method: 'POST',
+    });
+  },
+  async getChannelRefreshStatus(tableId: number) {
+    return request<ChannelRefreshStatus>(`/api/v1/channels/refresh-status?table_id=${tableId}`);
+  },
+  async saveChannelAdmin(channelId: number, adminContact: string, tableId: number) {
+    return request<{ ok: boolean; admin_contact: string }>(`/api/v1/channels/${channelId}/admin?table_id=${tableId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ admin_contact: adminContact }),
+    });
   },
   async listFolderCollections(tableId: number) {
     return request<{ items: ApiFolderCollection[] }>(`/api/v1/folder-collections?table_id=${tableId}`);

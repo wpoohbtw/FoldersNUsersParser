@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Check,
@@ -186,7 +187,24 @@ function LoadingState() {
 type OpenItemMenu = {
   type: 'role' | 'sources';
   itemId: number;
+  top: number;
+  left: number;
 } | null;
+
+function getFloatingMenuPosition(anchor: HTMLElement, width: number, height: number) {
+  const gap = 7;
+  const viewportPadding = 8;
+  const rect = anchor.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(viewportPadding, rect.left),
+    Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
+  );
+  const below = rect.bottom + gap;
+  const top = below + height <= window.innerHeight - viewportPadding
+    ? below
+    : Math.max(viewportPadding, rect.top - height - gap);
+  return { top, left };
+}
 
 export function FolderCollectionPage() {
   const [tables, setTables] = useState<ApiChannelTable[]>([]);
@@ -242,6 +260,21 @@ export function FolderCollectionPage() {
       .finally(() => setIsLoading(false));
   }, [selectedTableId]);
 
+  useEffect(() => {
+    if (!openItemMenu) return undefined;
+    const closeMenu = () => setOpenItemMenu(null);
+    const closeMenuOnScroll = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('.collectionFloatingMenu')) return;
+      closeMenu();
+    };
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', closeMenuOnScroll, true);
+    return () => {
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', closeMenuOnScroll, true);
+    };
+  }, [openItemMenu]);
+
   function replaceCollectionItem(
     collectionId: number,
     itemId: number,
@@ -291,6 +324,21 @@ export function FolderCollectionPage() {
         role: next.role,
       });
       replaceCollectionItem(collectionId, item.id, saved);
+      if (saved.channel_id !== null) {
+        setChannels((items) => items.map((channel) => (
+          channel.channel_id === saved.channel_id
+            ? { ...channel, admin_contact: saved.admin_contact }
+            : channel
+        )));
+        setCollections((items) => items.map((collection) => ({
+          ...collection,
+          items: collection.items.map((collectionItem) => (
+            collectionItem.channel_id === saved.channel_id
+              ? { ...collectionItem, admin_contact: saved.admin_contact }
+              : collectionItem
+          )),
+        })));
+      }
     } catch (err) {
       replaceCollectionItem(collectionId, item.id, item);
       setError(err instanceof Error ? err.message : collectionUi.saveFailed);
@@ -384,6 +432,7 @@ export function FolderCollectionPage() {
     void persistItem(collectionId, item, {
       channel_id: channel?.channel_id || null,
       channel_ref: channelRef,
+      admin_contact: channel?.admin_contact || item.admin_contact,
     });
   }
 
@@ -593,14 +642,21 @@ export function FolderCollectionPage() {
                                           <button
                                             className={`collectionRoleButton ${item.role}`}
                                             type="button"
-                                            onClick={() => setOpenItemMenu(isRoleOpen ? null : { type: 'role', itemId: item.id })}
+                                            onClick={(event) => setOpenItemMenu(isRoleOpen ? null : {
+                                              type: 'role',
+                                              itemId: item.id,
+                                              ...getFloatingMenuPosition(event.currentTarget, 150, 80),
+                                            })}
                                             disabled={isSaving}
                                           >
                                             <span>{item.role === 'sponsor' ? collectionUi.sponsor : collectionUi.member}</span>
                                             <ChevronDown size={14} />
                                           </button>
-                                          {isRoleOpen && (
-                                            <div className="collectionRoleMenu">
+                                          {isRoleOpen && openItemMenu && createPortal(
+                                            <div
+                                              className="collectionRoleMenu collectionFloatingMenu"
+                                              style={{ top: openItemMenu.top, left: openItemMenu.left }}
+                                            >
                                               {(['member', 'sponsor'] as FolderCollectionRole[]).map((role) => (
                                                 <button
                                                   className={`${role}${item.role === role ? ' isSelected' : ''}`}
@@ -615,7 +671,8 @@ export function FolderCollectionPage() {
                                                   {role === 'sponsor' ? collectionUi.sponsor : collectionUi.member}
                                                 </button>
                                               ))}
-                                            </div>
+                                            </div>,
+                                            document.body,
                                           )}
                                         </div>
                                       </td>
@@ -624,15 +681,26 @@ export function FolderCollectionPage() {
                                           {channel && sortedSources.length ? (
                                             <>
                                               <button
-                                                className={`collectionSourcesButton${hasCurrentIntersection ? ' hasIntersection' : ''}${isSourcesOpen ? ' isOpen' : ''}`}
-                                                type="button"
-                                                onClick={() => setOpenItemMenu(isSourcesOpen ? null : { type: 'sources', itemId: item.id })}
+                                                 className={`collectionSourcesButton${hasCurrentIntersection ? ' hasIntersection' : ''}${isSourcesOpen ? ' isOpen' : ''}`}
+                                                 type="button"
+                                                 onClick={(event) => setOpenItemMenu(isSourcesOpen ? null : {
+                                                   type: 'sources',
+                                                   itemId: item.id,
+                                                   ...getFloatingMenuPosition(
+                                                     event.currentTarget,
+                                                     270,
+                                                     Math.min(220, Math.max(46, sortedSources.length * 46)),
+                                                   ),
+                                                 })}
                                               >
                                                 <span>{formatChannelsCount(sortedSources.length)}</span>
                                                 <ChevronDown size={14} />
                                               </button>
-                                              {isSourcesOpen && (
-                                                <div className="collectionSourcesMenu">
+                                               {isSourcesOpen && openItemMenu && createPortal(
+                                                 <div
+                                                   className="collectionSourcesMenu collectionFloatingMenu"
+                                                   style={{ top: openItemMenu.top, left: openItemMenu.left }}
+                                                 >
                                                   {sortedSources.map((source) => {
                                                     const isInCollection = selectedChannelIds.has(Number(source.id));
                                                     return (
@@ -643,8 +711,9 @@ export function FolderCollectionPage() {
                                                       </div>
                                                     );
                                                   })}
-                                                </div>
-                                              )}
+                                                 </div>,
+                                                 document.body,
+                                               )}
                                             </>
                                           ) : (
                                             <span className="collectionEmptyMetric">{collectionUi.noIntersections}</span>

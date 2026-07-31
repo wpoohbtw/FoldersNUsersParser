@@ -988,13 +988,18 @@ button:disabled {
   flex: 0 0 auto;
 }
 
-.tableAccessButton {
+.tableAccessButton,
+.refreshChannelsButton {
   width: 42px;
   min-width: 42px;
   min-height: 42px;
   flex: 0 0 42px;
   border-radius: 999px;
   color: #6ff4ff;
+}
+
+.refreshChannelsButton:disabled {
+  opacity: 0.62;
 }
 
 .channelTableButton,
@@ -1381,34 +1386,62 @@ button:disabled {
 }
 
 .channelReviewTable {
-  min-width: 1280px;
+  min-width: 1450px;
 }
 
 .channelReviewTable th:nth-child(1),
 .channelReviewTable td:nth-child(1) {
-  width: 26%;
+  width: 22%;
 }
 
 .channelReviewTable th:nth-child(2),
-.channelReviewTable td:nth-child(2),
-.channelReviewTable th:nth-child(3),
-.channelReviewTable td:nth-child(3) {
-  width: 11%;
+.channelReviewTable td:nth-child(2) {
+  width: 14%;
 }
 
+.channelReviewTable th:nth-child(3),
+.channelReviewTable td:nth-child(3),
 .channelReviewTable th:nth-child(4),
 .channelReviewTable td:nth-child(4) {
-  width: 16%;
+  width: 9%;
 }
 
 .channelReviewTable th:nth-child(5),
 .channelReviewTable td:nth-child(5) {
-  width: 14%;
+  width: 13%;
 }
 
 .channelReviewTable th:nth-child(6),
 .channelReviewTable td:nth-child(6) {
-  width: 22%;
+  width: 12%;
+}
+
+.channelReviewTable th:nth-child(7),
+.channelReviewTable td:nth-child(7) {
+  width: 21%;
+}
+
+.channelAdminInput {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid rgba(83, 220, 255, 0.18);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: rgba(3, 13, 22, 0.62);
+  color: #dff7ff;
+  font: inherit;
+  outline: none;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.channelAdminInput:focus {
+  border-color: rgba(100, 238, 255, 0.48);
+  background: rgba(5, 23, 35, 0.78);
+}
+
+.channelAdminInput::placeholder {
+  color: #587487;
 }
 
 .folderChannelRow {
@@ -2843,6 +2876,11 @@ tbody tr:hover {
   border-radius: 12px;
   background: linear-gradient(145deg, rgba(8, 27, 41, 0.99), rgba(4, 14, 23, 0.99));
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
+}
+
+.collectionFloatingMenu {
+  position: fixed;
+  z-index: 1200;
 }
 
 .collectionRoleMenu {

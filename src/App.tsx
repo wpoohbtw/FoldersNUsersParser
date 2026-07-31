@@ -42,6 +42,7 @@ import {
   type ApiFolder,
   type ApiFolderChannel,
   type ApiTelegramBotConfig,
+  type ChannelRefreshStatus,
   type FolderLog,
   type ImportItem,
   type ImportJob,
@@ -747,6 +748,7 @@ function ImportModal({ onClose, onAccountsChanged }: { onClose: () => void; onAc
 const folderUi = {
   channels: '\u041a\u0430\u043d\u0430\u043b\u044b',
   channel: '\u041a\u0430\u043d\u0430\u043b',
+  admin: '\u0410\u0434\u043c\u0438\u043d',
   subscribers: '\u041f\u043e\u0434\u043f\u0438\u0441\u0447\u0438\u043a\u0438',
   folder: '\u041f\u0430\u043f\u043a\u0430',
   addedAt: '\u0414\u0430\u0442\u0430 \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u044f',
@@ -755,6 +757,8 @@ const folderUi = {
   loadingChannels: '\u041a\u0430\u043d\u0430\u043b\u044b \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u044e\u0442\u0441\u044f',
   noChannels: '\u041a\u0430\u043d\u0430\u043b\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b',
   loadChannelsFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u043a\u0430\u043d\u0430\u043b\u044b',
+  refreshChannels: '\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u044e \u043e \u043a\u0430\u043d\u0430\u043b\u0430\u0445',
+  saveAdminFailed: '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0430\u0434\u043c\u0438\u043d\u0430',
   all: '\u0412\u0441\u0435',
   unlabeled: '\u0411\u0435\u0437 \u043c\u0435\u0442\u043a\u0438',
   member: '\u0423\u0447\u0430\u0441\u0442\u043d\u0438\u043a',
@@ -847,7 +851,8 @@ function channelMatchesSearch(channel: ApiFolderChannel, normalizedSearch: strin
     !normalizedSearch ||
     channel.title.toLowerCase().includes(normalizedSearch) ||
     channel.url.toLowerCase().includes(normalizedSearch) ||
-    channel.username.toLowerCase().includes(normalizedSearch)
+    channel.username.toLowerCase().includes(normalizedSearch) ||
+    channel.admin_contact.toLowerCase().includes(normalizedSearch)
   );
 }
 
@@ -1188,6 +1193,9 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
   const [pendingChannelLabels, setPendingChannelLabels] = useState<Record<number, ChannelLabelSelection>>({});
+  const [channelAdminDrafts, setChannelAdminDrafts] = useState<Record<number, string>>({});
+  const [savingAdminIds, setSavingAdminIds] = useState<number[]>([]);
+  const [channelRefreshStatus, setChannelRefreshStatus] = useState<ChannelRefreshStatus | null>(null);
   const [sortState, setSortState] = useState<ChannelSortState>({ key: null, direction: null });
   const selectedTable = channelTables.find((table) => table.id === selectedTableId) || channelTables[0] || null;
 
@@ -1214,6 +1222,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
     try {
       const payload = await api.listChannels(tableId);
       setChannels(payload.items);
+      setChannelAdminDrafts({});
     } catch (err) {
       setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
     } finally {
@@ -1237,10 +1246,44 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
     if (selectedTableId) {
       setSelectedChannelIds([]);
       setPendingChannelLabels({});
+      setChannelAdminDrafts({});
       setSelectionMode(false);
       void loadChannels(selectedTableId);
+      api.getChannelRefreshStatus(selectedTableId)
+        .then(setChannelRefreshStatus)
+        .catch(() => setChannelRefreshStatus(null));
     }
   }, [selectedTableId]);
+
+  useEffect(() => {
+    if (!selectedTableId || channelRefreshStatus?.status !== 'running') return undefined;
+    let isCancelled = false;
+    let timerId = 0;
+    const poll = async () => {
+      try {
+        const status = await api.getChannelRefreshStatus(selectedTableId);
+        if (isCancelled) return;
+        setChannelRefreshStatus(status);
+        if (status.status === 'running') {
+          timerId = window.setTimeout(poll, 1200);
+        } else if (status.status === 'done') {
+          void loadChannels(selectedTableId);
+        } else if (status.status === 'failed') {
+          setChannelsError(status.message || folderUi.loadChannelsFailed);
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          setChannelRefreshStatus(null);
+          setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
+        }
+      }
+    };
+    timerId = window.setTimeout(poll, 1200);
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [channelRefreshStatus?.status, selectedTableId]);
 
   const counts = useMemo(
     () => ({
@@ -1371,6 +1414,52 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
     });
   }
 
+  async function refreshChannelProfiles() {
+    if (!selectedTableId || channelRefreshStatus?.status === 'running') return;
+    setChannelsError('');
+    try {
+      const status = await api.startChannelRefresh(selectedTableId);
+      setChannelRefreshStatus(status);
+      if (status.status === 'done') {
+        await loadChannels(selectedTableId);
+      }
+    } catch (err) {
+      setChannelsError(err instanceof Error ? err.message : folderUi.loadChannelsFailed);
+    }
+  }
+
+  async function saveChannelAdmin(channel: ApiFolderChannel, value: string) {
+    if (!selectedTableId || savingAdminIds.includes(channel.channel_id)) return;
+    const normalizedAdmin = value.trim();
+    if (normalizedAdmin === channel.admin_contact) {
+      setChannelAdminDrafts((items) => {
+        const next = { ...items };
+        delete next[channel.channel_id];
+        return next;
+      });
+      return;
+    }
+    setSavingAdminIds((ids) => [...ids, channel.channel_id]);
+    setChannelsError('');
+    try {
+      const saved = await api.saveChannelAdmin(channel.channel_id, normalizedAdmin, selectedTableId);
+      setChannels((items) => items.map((item) => (
+        item.channel_id === channel.channel_id
+          ? { ...item, admin_contact: saved.admin_contact }
+          : item
+      )));
+      setChannelAdminDrafts((items) => {
+        const next = { ...items };
+        delete next[channel.channel_id];
+        return next;
+      });
+    } catch (err) {
+      setChannelsError(err instanceof Error ? err.message : folderUi.saveAdminFailed);
+    } finally {
+      setSavingAdminIds((ids) => ids.filter((id) => id !== channel.channel_id));
+    }
+  }
+
   const filters: Array<{ id: ChannelReviewFilter; label: string; count: number }> = [
     { id: 'all', label: folderUi.all, count: counts.all },
     { id: 'unlabeled', label: folderUi.unlabeled, count: counts.unlabeled },
@@ -1419,6 +1508,18 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
                 )}
               </div>
             )}
+            <button
+              className="inlineIconButton refreshChannelsButton"
+              type="button"
+              onClick={() => void refreshChannelProfiles()}
+              disabled={!selectedTable || channelRefreshStatus?.status === 'running'}
+              title={channelRefreshStatus?.status === 'running'
+                ? `${folderUi.refreshChannels}: ${channelRefreshStatus.processed}/${channelRefreshStatus.total}`
+                : folderUi.refreshChannels}
+              aria-label={folderUi.refreshChannels}
+            >
+              <RefreshCw className={channelRefreshStatus?.status === 'running' ? 'spinIcon' : ''} size={16} />
+            </button>
             <button className="inlineIconButton tableAccessButton" type="button" onClick={() => setIsAccessModalOpen(true)} disabled={!selectedTable} title={folderUi.tableAccess} aria-label={folderUi.tableAccess}>
               <UserPlus size={16} />
             </button>
@@ -1449,7 +1550,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
           <div className="animatedTableGradient top" />
           <div className="folderChannelsScroll channelsReviewScroll">
             <table className="folderChannelsTable channelReviewTable">
-              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th><SortableChannelHeader label={folderUi.subscribers} sortKey="subscribers" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label="Avg views" sortKey="avg_views" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.folder} sortKey="folder" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.addedAt} sortKey="added_at" sortState={sortState} onSort={toggleSort} /></th><th>{folderUi.labels}</th></tr></thead>
+              <thead><tr><th><span className="channelHeaderLabel"><span className="channelSelectSlot">{selectionMode && <button className={`channelSelectBox headerSelectBox${allVisibleSelected ? ' isSelected' : ''}`} type="button" onClick={toggleVisibleChannels} title={folderUi.selectChannel} aria-label={folderUi.selectChannel} disabled={!visibleChannelIds.length}>{allVisibleSelected && <CheckCircle2 size={14} />}</button>}</span>{folderUi.channel}</span></th><th>{folderUi.admin}</th><th><SortableChannelHeader label={folderUi.subscribers} sortKey="subscribers" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label="Avg views" sortKey="avg_views" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.folder} sortKey="folder" sortState={sortState} onSort={toggleSort} /></th><th><SortableChannelHeader label={folderUi.addedAt} sortKey="added_at" sortState={sortState} onSort={toggleSort} /></th><th>{folderUi.labels}</th></tr></thead>
               <tbody>
                 {visibleChannels.length ? visibleChannels.map((channel, index) => {
                   const isExpanded = expandedChannelId === channel.id;
@@ -1471,6 +1572,25 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
                           <ChannelAvatar src={channel.avatar_url} title={channel.title} />
                           <ChannelTitleLink channel={channel} />
                         </div>
+                      </td>
+                      <td>
+                        <input
+                          className="channelAdminInput"
+                          value={Object.prototype.hasOwnProperty.call(channelAdminDrafts, channel.channel_id)
+                            ? channelAdminDrafts[channel.channel_id]
+                            : channel.admin_contact}
+                          onChange={(event) => setChannelAdminDrafts((items) => ({
+                            ...items,
+                            [channel.channel_id]: event.currentTarget.value,
+                          }))}
+                          onBlur={(event) => void saveChannelAdmin(channel, event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') event.currentTarget.blur();
+                          }}
+                          placeholder="@username"
+                          disabled={savingAdminIds.includes(channel.channel_id)}
+                          aria-label={`${folderUi.admin}: ${channel.title}`}
+                        />
                       </td>
                       <td className="metricCell">{formatMetric(channel.subscribers)}</td>
                       <td className="metricCell">{formatMetric(channel.avg_views)}</td>
@@ -1495,7 +1615,7 @@ function ChannelsPage({ onToast }: { onToast: (toast: SiteToast) => void }) {
                       </td>
                     </motion.tr>
                   );
-                }) : <tr><td className="emptyCell" colSpan={6}>{isLoadingChannels ? folderUi.loadingChannels : folderUi.noChannels}</td></tr>}
+                }) : <tr><td className="emptyCell" colSpan={7}>{isLoadingChannels ? folderUi.loadingChannels : folderUi.noChannels}</td></tr>}
               </tbody>
             </table>
           </div>

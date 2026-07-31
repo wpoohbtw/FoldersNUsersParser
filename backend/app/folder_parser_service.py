@@ -11,7 +11,7 @@ from telethon.errors.rpcerrorlist import UserAlreadyParticipantError, UserNotPar
 from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest, LeaveChannelRequest
 from telethon.tl.functions.chatlists import CheckChatlistInviteRequest, JoinChatlistInviteRequest
 from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
-from telethon.tl.types import DialogFilter, DialogFilterChatlist, MessageEntityTextUrl, MessageEntityUrl
+from telethon.tl.types import DialogFilter, DialogFilterChatlist, MessageEntityTextUrl, MessageEntityUrl, PeerChannel
 
 from .config import Settings
 from .db import Database
@@ -51,6 +51,8 @@ class FolderParserService:
         self._listeners: dict[str, ActiveFolderListener] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self._restore_tasks: dict[str, asyncio.Task] = {}
+        self._channel_refresh_tasks: dict[int, asyncio.Task] = {}
+        self._channel_refresh_statuses: dict[int, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self.on_folder_added: Callable[[str, str, str, str, int], Awaitable[bool]] | None = None
 
@@ -635,6 +637,144 @@ class FolderParserService:
                 table_id=int(table["id"]),
             )
         ]
+
+    def start_channel_refresh(
+        self,
+        table_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        table = self._ensure_table_access(table_id, portal_user_id, portal_username)
+        resolved_table_id = int(table["id"])
+        current_task = self._channel_refresh_tasks.get(resolved_table_id)
+        if current_task and not current_task.done():
+            return dict(self._channel_refresh_statuses[resolved_table_id])
+
+        listener = self._active_listener_for_table(resolved_table_id)
+        if not listener:
+            raise ValueError("Запустите слушатель папки перед обновлением каналов")
+
+        rows = self.db.list_folder_channels(include_rejected=True, table_id=resolved_table_id)
+        status: dict[str, Any] = {
+            "status": "running" if rows else "done",
+            "total": len(rows),
+            "processed": 0,
+            "updated": 0,
+            "failed": 0,
+            "message": "" if rows else "В таблице пока нет каналов",
+        }
+        self._channel_refresh_statuses[resolved_table_id] = status
+        if not rows:
+            return dict(status)
+
+        task = self._track_background_task(
+            self._refresh_channel_profiles(listener, resolved_table_id, rows, status)
+        )
+        self._channel_refresh_tasks[resolved_table_id] = task
+
+        def clear_refresh_task(completed: asyncio.Task) -> None:
+            if self._channel_refresh_tasks.get(resolved_table_id) is completed:
+                self._channel_refresh_tasks.pop(resolved_table_id, None)
+
+        task.add_done_callback(clear_refresh_task)
+        return dict(status)
+
+    def get_channel_refresh_status(
+        self,
+        table_id: int,
+        portal_user_id: str = "",
+        portal_username: str = "",
+    ) -> dict:
+        table = self._ensure_table_access(table_id, portal_user_id, portal_username)
+        return dict(self._channel_refresh_statuses.get(int(table["id"]), {
+            "status": "idle",
+            "total": 0,
+            "processed": 0,
+            "updated": 0,
+            "failed": 0,
+            "message": "",
+        }))
+
+    def _active_listener_for_table(self, table_id: int) -> ActiveFolderListener | None:
+        for listener in self._listeners.values():
+            if listener.is_stopping:
+                continue
+            listener_table_id = self.db.ensure_channel_table(
+                listener.portal_user_id,
+                listener.portal_username,
+            )
+            if int(listener_table_id) == int(table_id):
+                return listener
+        return None
+
+    async def _refresh_channel_profiles(
+        self,
+        listener: ActiveFolderListener,
+        table_id: int,
+        rows: list[dict],
+        status: dict[str, Any],
+    ) -> None:
+        self._log(listener, "system", f"Обновляю информацию о {len(rows)} каналах")
+        try:
+            for row in rows:
+                try:
+                    username = str(row.get("username") or "").strip().lstrip("@")
+                    link = str(row.get("link") or "").strip()
+                    references: list[object] = [reference for reference in (
+                        username,
+                        link,
+                        PeerChannel(int(row["channel_id"])),
+                    ) if reference]
+                    async with listener.lock:
+                        entity = None
+                        resolve_error: Exception | None = None
+                        for reference in references:
+                            try:
+                                entity = await listener.client.get_entity(reference)
+                                break
+                            except Exception as err:
+                                resolve_error = err
+                        if entity is None:
+                            raise resolve_error or ValueError("Канал не найден в Telegram")
+                        profile = await self._read_channel_profile(listener.client, entity, listener)
+                    if self.db.update_folder_channel_profile(
+                        int(row["channel_id"]),
+                        table_id,
+                        title=profile["title"],
+                        username=profile["username"],
+                        link=profile["link"],
+                        avatar_path=profile["avatar_path"],
+                        subscribers=profile["subscribers"],
+                        avg_views_10=profile["avg_views_10"],
+                    ):
+                        status["updated"] += 1
+                    else:
+                        status["failed"] += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    status["failed"] += 1
+                    title = str(row.get("title") or row.get("channel_id") or "Канал")
+                    self._log(listener, "warn", f"Не удалось обновить канал {title}: {err}")
+                finally:
+                    status["processed"] += 1
+            status["status"] = "done"
+            status["message"] = (
+                f"Обновлено {status['updated']} из {status['total']}, ошибок: {status['failed']}"
+            )
+            self._log(
+                listener,
+                "success" if not status["failed"] else "warn",
+                status["message"],
+            )
+        except asyncio.CancelledError:
+            status["status"] = "failed"
+            status["message"] = "Обновление каналов остановлено"
+            raise
+        except Exception as err:
+            status["status"] = "failed"
+            status["message"] = f"Не удалось обновить каналы: {err}"
+            self._log(listener, "warn", status["message"])
 
     def list_logs(self, portal_user_id: str = "", portal_username: str = "") -> list[dict]:
         return [
@@ -1249,6 +1389,7 @@ class FolderParserService:
             "username": row.get("username") or "",
             "url": row.get("link") or "",
             "avatar_url": f"/media/avatars/{avatar_path}" if avatar_path else "",
+            "admin_contact": row.get("admin_contact") or "",
             "subscribers": int(row.get("subscribers") or 0),
             "avg_views": int(row.get("avg_views_10") or 0),
             "added_at": row.get("created_at") or "",

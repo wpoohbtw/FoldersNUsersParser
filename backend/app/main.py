@@ -53,6 +53,10 @@ class ChannelLabelsRequest(BaseModel):
     is_bad: bool = False
 
 
+class ChannelAdminRequest(BaseModel):
+    admin_contact: str = ""
+
+
 class ChannelTableAccessRequest(BaseModel):
     username: str
 
@@ -319,6 +323,47 @@ def list_channels(table_id: int | None = None, portal_user: PortalUser = Depends
         }
     except PermissionError as err:
         raise HTTPException(status_code=403, detail=str(err)) from err
+
+
+@app.post("/api/v1/channels/refresh")
+async def refresh_channels(table_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    try:
+        return folder_parser.start_channel_refresh(
+            table_id,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.get("/api/v1/channels/refresh-status")
+def channel_refresh_status(table_id: int, portal_user: PortalUser = Depends(get_portal_user)) -> dict:
+    try:
+        return folder_parser.get_channel_refresh_status(
+            table_id,
+            portal_user_id=portal_user.user_id,
+            portal_username=portal_user.username,
+        )
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
+
+
+@app.put("/api/v1/channels/{channel_id}/admin")
+def update_channel_admin(
+    channel_id: int,
+    payload: ChannelAdminRequest,
+    table_id: int,
+    portal_user: PortalUser = Depends(get_portal_user),
+) -> dict:
+    table = db.get_accessible_channel_table(table_id, portal_user.user_id, portal_user.username)
+    if not table:
+        raise HTTPException(status_code=403, detail="Нет доступа к таблице каналов")
+    if not db.set_folder_channel_admin(channel_id, int(table["id"]), payload.admin_contact):
+        raise HTTPException(status_code=404, detail="Канал не найден")
+    return {"ok": True, "admin_contact": payload.admin_contact.strip()}
 
 
 @app.get("/api/v1/folder-collections")

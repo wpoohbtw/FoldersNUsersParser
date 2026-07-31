@@ -53,6 +53,10 @@ class FolderCollectionDatabaseTests(unittest.TestCase):
         self.assertEqual(saved_item["channel_id"], 101)
         self.assertEqual(saved_item["admin_contact"], "@ath_admin")
         self.assertEqual(saved_item["role"], "sponsor")
+        self.assertEqual(
+            self.db.get_folder_channel(101, self.table_id)["admin_contact"],
+            "@ath_admin",
+        )
 
         collections = self.db.list_folder_collections(
             self.table_id,
@@ -61,6 +65,41 @@ class FolderCollectionDatabaseTests(unittest.TestCase):
         self.assertEqual(len(collections), 1)
         self.assertEqual(collections[0]["title"], "Июль")
         self.assertEqual(collections[0]["items"], [saved_item])
+
+    def test_channel_admin_is_shared_by_all_collection_rows(self) -> None:
+        collections = [
+            self.db.create_folder_collection(
+                self.table_id,
+                title,
+                portal_username="tester",
+            )
+            for title in ("Первая", "Вторая")
+        ]
+        items = [
+            self.db.add_folder_collection_item(
+                collection["id"],
+                portal_username="tester",
+            )
+            for collection in collections
+        ]
+        for collection, item in zip(collections, items):
+            self.db.update_folder_collection_item(
+                collection["id"],
+                item["id"],
+                channel_id=101,
+                channel_ref="https://t.me/athinvest",
+                admin_contact="",
+                role="member",
+                portal_username="tester",
+            )
+
+        self.assertTrue(self.db.set_folder_channel_admin(101, self.table_id, "@global_admin"))
+
+        stored = self.db.list_folder_collections(self.table_id, portal_username="tester")
+        self.assertEqual(
+            [collection["items"][0]["admin_contact"] for collection in stored],
+            ["@global_admin", "@global_admin"],
+        )
 
     def test_collection_is_isolated_by_portal_owner(self) -> None:
         collection = self.db.create_folder_collection(

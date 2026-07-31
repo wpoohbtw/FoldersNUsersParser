@@ -142,6 +142,7 @@ class Database:
                 title TEXT NOT NULL,
                 link TEXT,
                 avatar_path TEXT,
+                admin_contact TEXT NOT NULL DEFAULT '',
                 subscribers INTEGER NOT NULL DEFAULT 0,
                 avg_views_10 INTEGER NOT NULL DEFAULT 0,
                 source_count INTEGER NOT NULL DEFAULT 0,
@@ -300,6 +301,7 @@ class Database:
             ("folder_channels", "account_id", "INTEGER"),
             ("folder_channels", "folder_id", "TEXT"),
             ("folder_channels", "table_id", "INTEGER"),
+            ("folder_channels", "admin_contact", "TEXT NOT NULL DEFAULT ''"),
             ("folder_channels", "review_status", "TEXT NOT NULL DEFAULT 'unchecked'"),
             ("folder_channels", "is_member", "INTEGER NOT NULL DEFAULT 0"),
             ("folder_channels", "is_sponsor", "INTEGER NOT NULL DEFAULT 0"),
@@ -314,6 +316,7 @@ class Database:
             ("telegram_bot_configs", "selected_index", "INTEGER NOT NULL DEFAULT 0"),
         ):
             self._ensure_column(table, column, definition)
+        self._migrate_folder_channel_admin_contacts()
         cur.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_folder_listeners_owner_account_folder
@@ -644,6 +647,40 @@ class Database:
         if column in {row["name"] for row in rows}:
             return
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        self.conn.commit()
+
+    def _migrate_folder_channel_admin_contacts(self) -> None:
+        self.conn.execute(
+            """
+            UPDATE folder_channels
+            SET admin_contact = COALESCE((
+                SELECT item.admin_contact
+                FROM folder_collection_items AS item
+                JOIN folder_collections AS collection ON collection.id = item.collection_id
+                WHERE item.channel_id = folder_channels.channel_id
+                  AND collection.table_id = folder_channels.table_id
+                  AND TRIM(COALESCE(item.admin_contact, '')) != ''
+                ORDER BY item.updated_at DESC, item.id DESC
+                LIMIT 1
+            ), '')
+            WHERE TRIM(COALESCE(admin_contact, '')) = ''
+            """
+        )
+        self.conn.execute(
+            """
+            UPDATE folder_collection_items
+            SET admin_contact = COALESCE((
+                SELECT channel.admin_contact
+                FROM folder_channels AS channel
+                JOIN folder_collections AS collection
+                  ON collection.id = folder_collection_items.collection_id
+                WHERE channel.channel_id = folder_collection_items.channel_id
+                  AND channel.table_id = collection.table_id
+                LIMIT 1
+            ), admin_contact)
+            WHERE channel_id IS NOT NULL
+            """
+        )
         self.conn.commit()
 
     def close(self) -> None:
@@ -1487,6 +1524,7 @@ class Database:
         if normalized_role not in {"member", "sponsor"}:
             raise ValueError("Неизвестная роль канала")
         now = _utc_now()
+        normalized_admin = admin_contact.strip()
         cur = self.conn.execute(
             """
             UPDATE folder_collection_items
@@ -1500,7 +1538,7 @@ class Database:
             (
                 int(channel_id) if channel_id is not None else None,
                 channel_ref.strip(),
-                admin_contact.strip(),
+                normalized_admin,
                 normalized_role,
                 now,
                 int(item_id),
@@ -1509,6 +1547,26 @@ class Database:
         )
         if not cur.rowcount:
             return None
+        if channel_id is not None:
+            self.conn.execute(
+                """
+                UPDATE folder_channels
+                SET admin_contact = ?, updated_at = ?
+                WHERE channel_id = ? AND table_id = ?
+                """,
+                (normalized_admin, now, int(channel_id), int(collection["table_id"])),
+            )
+            self.conn.execute(
+                """
+                UPDATE folder_collection_items
+                SET admin_contact = ?, updated_at = ?
+                WHERE channel_id = ?
+                  AND collection_id IN (
+                      SELECT id FROM folder_collections WHERE table_id = ?
+                  )
+                """,
+                (normalized_admin, now, int(channel_id), int(collection["table_id"])),
+            )
         self.conn.execute(
             "UPDATE folder_collections SET updated_at = ? WHERE id = ?",
             (now, int(collection_id)),
@@ -1519,6 +1577,72 @@ class Database:
             (int(item_id),),
         ).fetchone()
         return self._folder_collection_item_payload(dict(row)) if row else None
+
+    def set_folder_channel_admin(self, channel_id: int, table_id: int, admin_contact: str) -> bool:
+        normalized_admin = admin_contact.strip()
+        now = _utc_now()
+        cur = self.conn.execute(
+            """
+            UPDATE folder_channels
+            SET admin_contact = ?, updated_at = ?
+            WHERE channel_id = ? AND table_id = ?
+            """,
+            (normalized_admin, now, int(channel_id), int(table_id)),
+        )
+        if not cur.rowcount:
+            return False
+        self.conn.execute(
+            """
+            UPDATE folder_collection_items
+            SET admin_contact = ?, updated_at = ?
+            WHERE channel_id = ?
+              AND collection_id IN (
+                  SELECT id FROM folder_collections WHERE table_id = ?
+              )
+            """,
+            (normalized_admin, now, int(channel_id), int(table_id)),
+        )
+        self.conn.commit()
+        return True
+
+    def update_folder_channel_profile(
+        self,
+        channel_id: int,
+        table_id: int,
+        *,
+        title: str,
+        username: str,
+        link: str,
+        avatar_path: str,
+        subscribers: int,
+        avg_views_10: int,
+    ) -> bool:
+        cur = self.conn.execute(
+            """
+            UPDATE folder_channels
+            SET title = ?,
+                username = ?,
+                link = ?,
+                avatar_path = COALESCE(NULLIF(?, ''), avatar_path),
+                subscribers = ?,
+                avg_views_10 = ?,
+                updated_at = ?
+            WHERE channel_id = ? AND table_id = ?
+            """,
+            (
+                title,
+                username,
+                link,
+                avatar_path,
+                int(subscribers or 0),
+                int(avg_views_10 or 0),
+                _utc_now(),
+                int(channel_id),
+                int(table_id),
+            ),
+        )
+        self.conn.commit()
+        return bool(cur.rowcount)
 
     def delete_folder_collection_item(
         self,

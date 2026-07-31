@@ -24,6 +24,29 @@ class FakeTelegramClient:
         self.requests.append(request)
 
 
+class FakeChannelRefreshClient:
+    def __init__(self) -> None:
+        self.entity = SimpleNamespace(
+            id=707,
+            title="Fresh Channel",
+            username="freshchannel",
+            participants_count=100,
+        )
+
+    async def get_entity(self, reference: object) -> object:
+        return self.entity
+
+    async def __call__(self, request: object) -> object:
+        return SimpleNamespace(full_chat=SimpleNamespace(participants_count=4321))
+
+    async def iter_messages(self, entity: object, limit: int):
+        for views in (900, 100, 200, 300):
+            yield SimpleNamespace(views=views)
+
+    async def download_profile_photo(self, entity: object, file: str, download_big: bool) -> None:
+        Path(file).write_bytes(b"avatar")
+
+
 class ChannelReviewDatabaseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -110,6 +133,7 @@ class ChannelReviewDatabaseTests(unittest.TestCase):
 
     def test_existing_database_gets_label_columns_and_blacklist_table(self) -> None:
         self.db.conn.execute("DROP TABLE channel_blacklist")
+        self.db.conn.execute("ALTER TABLE folder_channels DROP COLUMN admin_contact")
         self.db.conn.execute("ALTER TABLE folder_channels DROP COLUMN is_member")
         self.db.conn.execute("ALTER TABLE folder_channels DROP COLUMN is_sponsor")
         self.db.conn.commit()
@@ -127,6 +151,7 @@ class ChannelReviewDatabaseTests(unittest.TestCase):
         ).fetchone()
         self.assertIn("is_member", columns)
         self.assertIn("is_sponsor", columns)
+        self.assertIn("admin_contact", columns)
         self.assertIsNotNone(blacklist_table)
 
     def test_bot_keyboard_marks_selected_labels(self) -> None:
@@ -214,3 +239,67 @@ class FolderBlacklistRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.requests), 1)
         self.assertEqual(service._stored_listener_channel_ids(listener), set())
         await placeholder_task
+
+
+class ChannelProfileRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        temp_path = Path(self.temp_dir.name)
+        self.db = Database(temp_path / "refresh.db")
+        self.db.init()
+        self.table_id = self.db.ensure_channel_table("", "tester")
+        self.db.upsert_folder_channel(
+            channel_id=707,
+            title="Old Channel",
+            username="oldchannel",
+            link="https://t.me/oldchannel",
+            subscribers=10,
+            avg_views_10=5,
+            portal_username="tester",
+            table_id=self.table_id,
+        )
+        self.placeholder_task = asyncio.create_task(asyncio.sleep(0))
+        self.listener = ActiveFolderListener(
+            key="username:tester:10:20",
+            listener_id=1,
+            portal_user_id="",
+            portal_username="tester",
+            account_id=10,
+            folder_id="20",
+            folder_title="Watcher",
+            client=FakeChannelRefreshClient(),
+            task=self.placeholder_task,
+        )
+        self.service = FolderParserService(
+            SimpleNamespace(avatars_dir=temp_path / "avatars"),
+            self.db,
+        )
+        self.service._listeners[self.listener.key] = self.listener
+
+    async def asyncTearDown(self) -> None:
+        await self.placeholder_task
+        self.db.close()
+        self.temp_dir.cleanup()
+
+    async def test_background_refresh_updates_channel_profile_and_status(self) -> None:
+        queued = self.service.start_channel_refresh(
+            self.table_id,
+            portal_username="tester",
+        )
+        self.assertEqual(queued["status"], "running")
+
+        await asyncio.gather(*list(self.service._background_tasks))
+
+        status = self.service.get_channel_refresh_status(
+            self.table_id,
+            portal_username="tester",
+        )
+        channel = self.db.get_folder_channel(707, self.table_id)
+        self.assertEqual(status["status"], "done")
+        self.assertEqual(status["updated"], 1)
+        self.assertEqual(channel["title"], "Fresh Channel")
+        self.assertEqual(channel["username"], "@freshchannel")
+        self.assertEqual(channel["link"], "https://t.me/freshchannel")
+        self.assertEqual(channel["subscribers"], 4321)
+        self.assertEqual(channel["avg_views_10"], 200)
+        self.assertTrue(channel["avatar_path"].endswith("/channels/707.jpg"))
